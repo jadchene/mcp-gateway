@@ -1,0 +1,44 @@
+{
+  "name": "@jadchene/mcp-gateway-service",
+  "version": "0.1.0",
+  "description": "A token-efficient MCP gateway that provides one unified entry point for multiple downstream MCP services.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mcp-gateway-service": "dist/index.js"
+  },
+  "license": "MIT",
+  "author": "jadchene",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "node --experimental-strip-types src/index.ts",
+    "start": "node dist/index.js",
+    "test": "node --test --experimental-strip-types test/**/*.test.ts",
+    "version": "node dist/index.js --version",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "config.example.json",
+    "README.md",
+    "README_zh.md",
+    "LICENSE",
+    "scripts"
+  ],
+  "keywords": [
+    "mcp",
+    "gateway",
+    "model context protocol",
+    "agent",
+    "token-efficient"
+  ],
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}
