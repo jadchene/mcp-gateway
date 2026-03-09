@@ -100,10 +100,10 @@ $example = @{
     mcpServers = @{
         gateway = @{
             command = "mcp-gateway-service"
-            args = @()
-            env = @{
-                MCP_GATEWAY_CONFIG = $resolvedConfigPath
-            }
+            args = @(
+                "--config",
+                $resolvedConfigPath
+            )
         }
     }
 } | ConvertTo-Json -Depth 6
