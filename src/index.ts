@@ -40,6 +40,11 @@ class Application {
   });
 
   /**
+   * Prevents duplicate shutdown execution when multiple exit signals arrive.
+   */
+  private shuttingDown = false;
+
+  /**
    * Starts the application and registers shutdown hooks.
    */
   public async start(): Promise<void> {
@@ -63,7 +68,12 @@ class Application {
    * Registers signal handlers for graceful shutdown.
    */
   private registerSignals(): void {
-    const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
+    const shutdown = async (signal: NodeJS.Signals | "stdin-end" | "stdin-close"): Promise<void> => {
+      if (this.shuttingDown) {
+        return;
+      }
+      this.shuttingDown = true;
+
       this.logger.info("gateway.stopping", { signal });
       this.watcher.stop();
       await this.registry.dispose();
@@ -72,6 +82,8 @@ class Application {
 
     process.on("SIGINT", () => void shutdown("SIGINT"));
     process.on("SIGTERM", () => void shutdown("SIGTERM"));
+    process.stdin.on("end", () => void shutdown("stdin-end"));
+    process.stdin.on("close", () => void shutdown("stdin-close"));
   }
 }
 

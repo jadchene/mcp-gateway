@@ -350,13 +350,7 @@ export class StdioMcpClient {
     this.child = null;
     this.writer = null;
 
-    try {
-      child.kill();
-    } catch {
-      /**
-       * Ignores kill failures because the process may have already exited.
-       */
-    }
+    terminateChildProcess(child);
     await waitForChildExit(child);
     cleanupChildProcess(child);
   }
@@ -372,7 +366,7 @@ export class StdioMcpClient {
       },
       clientInfo: {
         name: "mcp-gateway",
-        version: "0.2.0"
+        version: "0.2.1"
       }
     });
 
@@ -606,6 +600,32 @@ function resolveViaPowerShell(command: string): string | null {
  */
 function escapePowerShellSingleQuotedString(value: string): string {
   return value.replace(/'/g, "''");
+}
+
+/**
+ * Terminates one child process, using process-tree shutdown on Windows when possible.
+ */
+function terminateChildProcess(child: ChildProcessWithoutNullStreams): void {
+  if (process.platform === "win32" && child.pid) {
+    try {
+      execFileSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: ["ignore", "ignore", "ignore"]
+      });
+      return;
+    } catch {
+      /**
+       * Falls back to normal child termination when taskkill fails.
+       */
+    }
+  }
+
+  try {
+    child.kill();
+  } catch {
+    /**
+     * Ignores kill failures because the process may have already exited.
+     */
+  }
 }
 
 /**
