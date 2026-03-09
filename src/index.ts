@@ -47,10 +47,12 @@ class Application {
       throw new Error(`Config file was not found: ${this.configPath}`);
     }
 
-    await this.registry.initialize();
+    const startup = this.registry.initialize();
+    this.server.setStartupBarrier(startup);
     this.server.start();
-    this.watcher.start();
     this.registerSignals();
+    await startup;
+    this.watcher.start();
 
     this.logger.info("gateway.started", {
       configPath: this.configPath

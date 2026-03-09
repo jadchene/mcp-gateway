@@ -28,6 +28,11 @@ export class GatewayServer {
   private readonly writer = createMessageWriter(process.stdout);
 
   /**
+   * Stores the startup barrier that must resolve before gateway tools can use the registry.
+   */
+  private startupBarrier: Promise<void> = Promise.resolve();
+
+  /**
    * Creates the gateway server.
    */
   public constructor(
@@ -36,6 +41,13 @@ export class GatewayServer {
   ) {
     this.registry = registry;
     this.logger = logger;
+  }
+
+  /**
+   * Sets the startup barrier used to delay tool handling until the registry is ready.
+   */
+  public setStartupBarrier(barrier: Promise<void>): void {
+    this.startupBarrier = barrier;
   }
 
   /**
@@ -80,6 +92,7 @@ export class GatewayServer {
       }
 
       if (request.method === "tools/call") {
+        await this.startupBarrier;
         const result = await this.handleToolCall(request);
         this.writer.write(jsonRpcResult(request.id, result));
         return;
@@ -203,7 +216,7 @@ export class GatewayServer {
       },
       serverInfo: {
         name: "mcp-gateway",
-        version: "0.1.0"
+        version: "0.1.1"
       }
     };
   }
