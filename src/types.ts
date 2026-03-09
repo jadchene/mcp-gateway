@@ -32,6 +32,10 @@ export interface ServiceConfig {
    */
   serviceId: string;
   /**
+   * Indicates whether the service should be loaded by the gateway.
+   */
+  enable: boolean;
+  /**
    * Provides a display name for operators and clients.
    */
   name: string;

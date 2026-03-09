@@ -39,7 +39,9 @@ export function validateGatewayConfig(input: unknown): GatewayConfig {
     seenServiceIds.add(service.serviceId);
   }
 
-  return { services };
+  return {
+    services: services.filter((service) => service.enable)
+  };
 }
 
 /**
@@ -51,11 +53,13 @@ function validateServiceConfig(input: unknown): ServiceConfig {
   }
 
   const serviceId = requireNonEmptyString(input.serviceId, "service.serviceId");
+  const enable = optionalBoolean(input.enable, `service '${serviceId}' enable`) ?? true;
   const name = requireNonEmptyString(input.name, `service '${serviceId}' name`);
   const description = optionalString(input.description, `service '${serviceId}' description`);
 
   return {
     serviceId,
+    enable,
     name,
     description,
     transport: validateTransportConfig(serviceId, input.transport)
@@ -117,6 +121,19 @@ function optionalString(input: unknown, label: string): string | undefined {
   }
   if (typeof input !== "string") {
     throw new Error(`The '${label}' field must be a string when present.`);
+  }
+  return input;
+}
+
+/**
+ * Reads an optional boolean field.
+ */
+function optionalBoolean(input: unknown, label: string): boolean | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "boolean") {
+    throw new Error(`The '${label}' field must be a boolean when present.`);
   }
   return input;
 }

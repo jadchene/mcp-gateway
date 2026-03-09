@@ -17,6 +17,7 @@ test("validateGatewayConfig accepts a minimal valid stdio config", () => {
   });
 
   assert.equal(config.services[0]?.serviceId, "demo");
+  assert.equal(config.services[0]?.enable, true);
 });
 
 test("validateGatewayConfig rejects duplicate service identifiers", () => {
@@ -55,4 +56,33 @@ test("validateGatewayConfig rejects services without a transport", () => {
       ]
     });
   }, /transport must be a JSON object/);
+});
+
+test("validateGatewayConfig filters disabled services and keeps enabled ones", () => {
+  const config = validateGatewayConfig({
+    services: [
+      {
+        serviceId: "enabled-demo",
+        name: "Enabled Demo",
+        transport: {
+          type: "stdio",
+          command: "node"
+        }
+      },
+      {
+        serviceId: "disabled-demo",
+        enable: false,
+        name: "Disabled Demo",
+        transport: {
+          type: "stdio",
+          command: "node"
+        }
+      }
+    ]
+  });
+
+  assert.deepEqual(
+    config.services.map((service) => service.serviceId),
+    ["enabled-demo"]
+  );
 });

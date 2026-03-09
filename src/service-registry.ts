@@ -298,7 +298,8 @@ async function disposeClientMap(clientMap: Map<string, StdioMcpClient>): Promise
 async function disposeRemovedClients(previous: Map<string, StdioMcpClient>, next: Map<string, StdioMcpClient>): Promise<void> {
   const removed: StdioMcpClient[] = [];
   for (const [key, client] of previous.entries()) {
-    if (!next.has(key)) {
+    const nextClient = next.get(key);
+    if (!nextClient || nextClient !== client) {
       removed.push(client);
     }
   }

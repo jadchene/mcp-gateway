@@ -46,3 +46,59 @@ test("ServiceRegistry loads metadata and routes downstream tool calls", async ()
 
   await registry.dispose();
 });
+
+test("ServiceRegistry removes disabled services on reload", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
+  const configPath = join(tempDir, "config.json");
+  const echoServicePath = join(process.cwd(), "examples", "echo-service.ts");
+
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      services: [
+        {
+          serviceId: "demo-echo",
+          name: "Demo Echo",
+          transport: {
+            type: "stdio",
+            command: "node",
+            args: ["--experimental-strip-types", echoServicePath],
+            cwd: process.cwd()
+          }
+        }
+      ]
+    }),
+    "utf8"
+  );
+
+  const registry = new ServiceRegistry(configPath, new ConfigLoader(), new Logger());
+  await registry.initialize();
+  assert.equal(registry.listServices().length, 1);
+
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      services: [
+        {
+          serviceId: "demo-echo",
+          enable: false,
+          name: "Demo Echo",
+          transport: {
+            type: "stdio",
+            command: "node",
+            args: ["--experimental-strip-types", echoServicePath],
+            cwd: process.cwd()
+          }
+        }
+      ]
+    }),
+    "utf8"
+  );
+
+  await registry.reload();
+
+  assert.equal(registry.listServices().length, 0);
+  assert.equal(registry.getService("demo-echo"), null);
+
+  await registry.dispose();
+});

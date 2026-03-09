@@ -2,7 +2,7 @@ English | [简体中文](./README_zh.md)
 
 # MCP Gateway
 
-`@jadchene/mcp-gateway-service` is a lightweight Model Context Protocol (MCP) gateway that provides **token-efficient, on-demand discovery** and **one unified MCP entry point for multiple downstream services**.
+This project provides a lightweight Model Context Protocol (MCP) gateway for **token-efficient, on-demand discovery** and **one unified entry point for multiple downstream services**.
 
 Instead of exposing every downstream MCP tool up front, the gateway keeps a small fixed tool surface and lets the client discover services, list tools for a specific service, fetch one tool schema when needed, and then forward the actual tool call.
 
@@ -81,6 +81,7 @@ In short, this gateway is useful when you want to treat multiple MCP services as
 ### Practical Operations
 - Load a static service pool from JSON.
 - Reload config automatically when the file changes.
+- Stop removed, disabled, or replaced downstream processes during hot reload.
 - Restart failed downstream processes up to 3 times before marking them unavailable.
 - Preserve the last valid config snapshot when a reload fails.
 
@@ -139,6 +140,9 @@ mcp-gateway-service -v
 
 The gateway currently supports `stdio` downstream transports only.
 
+A service is loaded only when `enable` is missing or set to `true`. If `enable` is set to `false`, the gateway skips that service entirely. During hot reload, disabling or removing a service also stops its existing downstream process if one is running.
+
+- `enable` is optional. When omitted, the gateway treats the service as enabled.
 - `cwd` is optional. When omitted, the gateway uses its current working directory.
 - `env` is optional.
 - `framing` is optional. When omitted, the gateway tries `line` first and then `content-length`.
@@ -150,6 +154,7 @@ The gateway currently supports `stdio` downstream transports only.
   "services": [
     {
       "serviceId": "demo-echo",
+      "enable": true,
       "name": "Demo Echo Service",
       "description": "Sample echo MCP service.",
       "transport": {

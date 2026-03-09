@@ -2,6 +2,7 @@
   "services": [
     {
       "serviceId": "demo-echo",
+      "enable": true,
       "name": "Demo Echo Service",
       "description": "Sample echo MCP service.",
       "transport": {

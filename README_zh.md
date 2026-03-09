@@ -2,7 +2,7 @@
 
 # MCP Gateway
 
-`@jadchene/mcp-gateway-service` 是一个提供 **按需发现、节省 token** 和 **统一多 MCP 接入入口** 的 MCP 网关。
+这个项目提供了一个轻量的 MCP 网关，用于实现**按需发现、节省 token**，并为多个下游 MCP 服务提供**统一接入入口**。
 
 它不会在会话开始时把所有下游 MCP 工具一次性暴露给 AI，而是保持一个固定且很小的网关工具集合，让客户端按需：
 
@@ -87,6 +87,7 @@
 ### 实用运维能力
 - 从 JSON 配置文件加载静态服务池。
 - 监听配置文件变化并自动热刷新。
+- 热刷新时会停掉已删除、已禁用或已被替换配置对应的下游进程。
 - 下游进程异常时最多自动重启 3 次。
 - 配置刷新失败时保留上一版有效快照。
 
@@ -145,6 +146,9 @@ mcp-gateway-service -v
 
 当前只支持 `stdio` 类型的下游传输。
 
+只有当 `enable` 未填写或显式为 `true` 时，服务才会被加载；如果 `enable` 为 `false`，网关会跳过该服务。热刷新时，如果某个服务被禁用或从配置中删除，网关也会停掉它当前已启动的下游进程。
+
+- `enable` 可选，不填时默认按启用处理
 - `cwd` 可选，不填时使用当前工作目录
 - `env` 可选
 - `framing` 可选，不填时先尝试 `line`，再尝试 `content-length`
@@ -154,6 +158,7 @@ mcp-gateway-service -v
   "services": [
     {
       "serviceId": "demo-echo",
+      "enable": true,
       "name": "Demo Echo Service",
       "description": "Sample echo MCP service.",
       "transport": {
