@@ -11,7 +11,7 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 
 - **Discovery First**: Never guess a `serviceId` or downstream `toolName`. Discover them through the gateway.
 - **Token Efficiency**: Do not enumerate every service and every tool unless the task genuinely needs it.
-- **Schema Before First Call**: Before the first call to an unfamiliar downstream tool, fetch its schema.
+- **Schema Before Unclear Arguments**: If the tool arguments are not fully certain, fetch the schema before calling the tool. Do not guess argument names, shapes, or confirmation fields.
 - **Cache Mentally Per Session**: Reuse known service lists, tool lists, and schemas within the current session instead of asking again without reason.
 - **Compression Recovery Gate**: After any context compression event, re-read `AGENTS.md` and this `SKILL.md` before continuing.
 
@@ -19,7 +19,7 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 
 1. Call `gateway.listServices` once to find the right downstream service.
 2. Call `gateway.listTools(serviceId)` only for the selected service.
-3. Call `gateway.getToolSchema(serviceId, toolName)` only before the first use of that tool, or when arguments are unclear.
+3. Call `gateway.getToolSchema(serviceId, toolName)` before the first use of that tool, or any time the arguments are not fully certain.
 4. Call `gateway.callTool(serviceId, toolName, arguments)` for execution.
 5. Re-discover only when a call fails, service availability changes, or the task clearly requires fresh metadata.
 
@@ -31,6 +31,12 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 - Treat `gateway.manageService` as an explicit service-control tool, not part of the default workflow.
 - Use `gateway.manageService({ serviceId, action: "reconnect" })` only when the user explicitly wants to retry starting a failed service after its dependency becomes ready.
 - Use `gateway.manageService({ serviceId, action: "enable" | "disable" })` only when the user explicitly wants to persistently change that service's enabled state in the config file.
+
+## Strict Argument Rule
+
+- If a tool has any non-trivial arguments, optional flags, confirmation fields, enum values, or write-safety fields, call `gateway.getToolSchema` before execution unless the exact argument contract is already confirmed in the current session.
+- Do not rely on tool descriptions alone when the argument shape could affect correctness or safety.
+- This is especially important for write tools, confirmation-based tools, and tools with nested argument objects.
 
 ## Response Shape Expectations
 
@@ -55,7 +61,7 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
   - `gateway.getToolSchema({ serviceId: "selected-service", toolName: "selected-tool" })`
   - `gateway.callTool({ serviceId: "selected-service", toolName: "selected-tool", arguments: {...} })`
 
-- Need to inspect an unfamiliar tool before first use:
+- Need to inspect an unfamiliar tool before first use, or any tool whose arguments are not fully certain:
   - `gateway.getToolSchema({ serviceId: "selected-service", toolName: "selected-tool" })`
   - build arguments strictly from `inputSchema`
   - call the tool only after the schema is understood
@@ -64,6 +70,7 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 
 - **Never** flatten all downstream tools into your own notes unless the task explicitly needs a full inventory.
 - **Never** invent arguments for a tool when the schema can be queried cheaply.
+- **Never** skip `gateway.getToolSchema` when argument names or fields are unclear.
 - **Never** assume a service is available without checking recent gateway discovery results when availability matters.
 
 ## Practical Guidance
@@ -71,3 +78,4 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 - Choose `serviceId` by task domain and service description instead of assuming a fixed service naming scheme.
 - Prefer the smallest discovery step that can answer the question.
 - If a downstream tool fails with a validation error, fetch or re-check its schema before retrying.
+- If there is any doubt about required parameters, confirmation tokens, or argument structure, fetch the schema first instead of guessing.
