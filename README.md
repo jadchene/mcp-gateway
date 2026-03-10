@@ -171,6 +171,7 @@ The gateway exposes a fixed set of discovery and routing tools:
 - `gateway.getService`
 - `gateway.listTools`
 - `gateway.getToolSchema`
+- `gateway.manageService`
 - `gateway.callTool`
 
 ### Response design
@@ -178,7 +179,34 @@ The gateway exposes a fixed set of discovery and routing tools:
 - `gateway.listServices` returns only `serviceId`, `description`, and `available`.
 - `gateway.listTools` returns only `name` and `description`.
 - `gateway.getToolSchema` returns only `inputSchema` and `outputSchema`.
+- `gateway.manageService` returns only `serviceId`, `action`, `enabled`, and `available`.
 - `gateway.callTool` forwards the downstream MCP tool result directly without extra gateway metadata wrapping.
+
+### Default workflow vs diagnostics
+
+- The default token-efficient workflow still uses four tools: `gateway.listServices`, `gateway.listTools`, `gateway.getToolSchema`, and `gateway.callTool`.
+- `gateway.getService` is primarily for diagnostics, such as checking recent service errors, connection state, protocol version, or downstream server info.
+- `gateway.manageService` is an operational tool for explicit service control, not part of the normal discovery flow.
+
+### `gateway.manageService`
+
+Use `gateway.manageService` when you explicitly need to reconnect a service or persistently change its enabled state.
+
+Input:
+
+- `serviceId`: logical service identifier
+- `action`: one of `reconnect`, `enable`, or `disable`
+
+Action behavior:
+
+- `reconnect`: immediately tries to start and reinitialize the specified downstream MCP again. Use this when a service previously failed because its dependency was not ready, such as an IDE that was not open yet.
+- `enable`: writes `enable: true` to the config file for that service and triggers a reload.
+- `disable`: writes `enable: false` to the config file for that service and triggers a reload.
+
+Important notes:
+
+- `enable` and `disable` are persisted to the JSON config file. They are not session-only toggles.
+- `reconnect` does not modify the config file. It only retries the current service lifecycle.
 
 ## Recommended Client Workflow
 
@@ -188,7 +216,9 @@ For the best token efficiency, the MCP client should cache discovery results ins
 2. Call `gateway.listTools(serviceId)` only when a service is actually needed.
 3. Call `gateway.getToolSchema(serviceId, toolName)` only before the first use of that tool.
 4. Call `gateway.callTool(...)` for execution.
-5. Refresh discovery data only when a call fails, the config changes, or the client explicitly wants a refresh.
+5. Use `gateway.getService` only when diagnostics are explicitly needed.
+6. Use `gateway.manageService` only when a service must be reconnected or explicitly enabled/disabled.
+7. Refresh discovery data only when a call fails, the config changes, or the client explicitly wants a refresh.
 
 ## Skill Integration (Recommended)
 

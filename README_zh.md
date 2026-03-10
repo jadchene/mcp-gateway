@@ -173,6 +173,7 @@ mcp-gateway-service -v
 - `gateway.getService`
 - `gateway.listTools`
 - `gateway.getToolSchema`
+- `gateway.manageService`
 - `gateway.callTool`
 
 ### 返回结构约定
@@ -180,7 +181,34 @@ mcp-gateway-service -v
 - `gateway.listServices` 只返回 `serviceId`、`description`、`available`
 - `gateway.listTools` 只返回 `name`、`description`
 - `gateway.getToolSchema` 只返回 `inputSchema`、`outputSchema`
+- `gateway.manageService` 只返回 `serviceId`、`action`、`enabled`、`available`
 - `gateway.callTool` 直接返回下游 MCP 的结果，不再额外包一层网关元数据
+
+### 默认流程与诊断的区别
+
+- 默认的节省 token 工作流仍然只依赖 4 个工具：`gateway.listServices`、`gateway.listTools`、`gateway.getToolSchema`、`gateway.callTool`
+- `gateway.getService` 主要用于诊断，例如查看最近错误、连接状态、协议版本、下游服务信息
+- `gateway.manageService` 是显式运维控制工具，不属于日常 discovery 流程
+
+### `gateway.manageService`
+
+当你明确需要重新拉起某个服务，或者持久化修改某个服务的启用状态时，使用 `gateway.manageService`。
+
+输入参数：
+
+- `serviceId`：逻辑服务标识
+- `action`：只能是 `reconnect`、`enable`、`disable`
+
+动作语义：
+
+- `reconnect`：立即重新尝试启动并重新初始化指定下游 MCP。适合处理“之前因为依赖没准备好而启动失败”的场景，比如当时 IDE 没开，后来打开后再次尝试拉起 IDE MCP。
+- `enable`：把该服务在配置文件中的 `enable` 写成 `true`，然后触发 reload。
+- `disable`：把该服务在配置文件中的 `enable` 写成 `false`，然后触发 reload。
+
+注意：
+
+- `enable` 和 `disable` 会持久化写入 JSON 配置文件，不是只在当前会话里生效。
+- `reconnect` 不会修改配置文件，只会重新尝试当前服务生命周期。
 
 ## 推荐调用流程
 
@@ -190,7 +218,9 @@ mcp-gateway-service -v
 2. 真正需要某个服务时，再调用 `gateway.listTools(serviceId)`
 3. 第一次调用某个工具前，再调用 `gateway.getToolSchema(serviceId, toolName)`
 4. 执行时调用 `gateway.callTool(...)`
-5. 只有在调用失败、配置变更、或明确需要刷新时才重新发现
+5. 只有在明确需要诊断时才调用 `gateway.getService`
+6. 只有在需要重新拉起服务或显式启用/停用服务时才调用 `gateway.manageService`
+7. 只有在调用失败、配置变更、或明确需要刷新时才重新发现
 
 ## Skill 集成（推荐）
 

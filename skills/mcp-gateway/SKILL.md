@@ -28,6 +28,9 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 - Treat `gateway.getService` as a diagnostic tool, not part of the default workflow.
 - Use it only when the user explicitly asks to inspect service health, connection state, protocol details, or recent service errors.
 - Do not call it during normal task execution when the four-tool flow is sufficient.
+- Treat `gateway.manageService` as an explicit service-control tool, not part of the default workflow.
+- Use `gateway.manageService({ serviceId, action: "reconnect" })` only when the user explicitly wants to retry starting a failed service after its dependency becomes ready.
+- Use `gateway.manageService({ serviceId, action: "enable" | "disable" })` only when the user explicitly wants to persistently change that service's enabled state in the config file.
 
 ## Response Shape Expectations
 
