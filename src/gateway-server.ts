@@ -132,6 +132,8 @@ export class GatewayServer {
         return this.listTools(args);
       case "gateway.getToolSchema":
         return this.getToolSchema(args);
+      case "gateway.manageService":
+        return this.manageService(args);
       case "gateway.callTool":
         return this.callDownstreamTool(args);
       default:
@@ -204,6 +206,21 @@ export class GatewayServer {
   }
 
   /**
+   * Applies one compact service management action.
+   */
+  private async manageService(args: JsonObject): Promise<unknown> {
+    const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
+    const action = requireServiceAction(args.action);
+    const result = await this.registry.manageService(serviceId, action);
+    return successContent({
+      serviceId: result.serviceId,
+      action: result.action,
+      enabled: result.enabled,
+      available: result.available
+    });
+  }
+
+  /**
    * Builds the MCP initialize result advertised by the gateway.
    */
   private buildInitializeResult(): JsonObject {
@@ -216,7 +233,7 @@ export class GatewayServer {
       },
       serverInfo: {
         name: "mcp-gateway",
-        version: "0.2.2"
+        version: "0.3.0"
       }
     };
   }
@@ -256,6 +273,18 @@ function buildGatewayTools(): JsonObject[] {
       inputSchema: objectSchema(["serviceId", "toolName"], {
         serviceId: stringSchema("Logical service identifier."),
         toolName: stringSchema("Downstream tool name.")
+      })
+    },
+    {
+      name: "gateway.manageService",
+      description: "Reconnects one service or updates its enabled state with a compact action.",
+      inputSchema: objectSchema(["serviceId", "action"], {
+        serviceId: stringSchema("Logical service identifier."),
+        action: {
+          type: "string",
+          description: "Management action applied to the service.",
+          enum: ["reconnect", "enable", "disable"]
+        }
       })
     },
     {
@@ -339,6 +368,16 @@ function requireString(input: unknown, message: string): string {
     throw new Error(message);
   }
   return input;
+}
+
+/**
+ * Ensures the service management action is supported.
+ */
+function requireServiceAction(input: unknown): "reconnect" | "enable" | "disable" {
+  if (input === "reconnect" || input === "enable" || input === "disable") {
+    return input;
+  }
+  throw new Error("The 'action' argument must be one of 'reconnect', 'enable', or 'disable'.");
 }
 
 function isJsonRpcRequest(message: JsonRpcMessage): message is JsonRpcRequest {

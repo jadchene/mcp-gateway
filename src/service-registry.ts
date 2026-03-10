@@ -1,3 +1,4 @@
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ConfigLoader } from "./config.ts";
 import { Logger } from "./logger.ts";
@@ -169,11 +170,108 @@ export class ServiceRegistry {
   }
 
   /**
+   * Manages one service runtime or persisted enable flag through a compact action interface.
+   */
+  public async manageService(
+    serviceId: string,
+    action: "reconnect" | "enable" | "disable"
+  ): Promise<ManageServiceResult> {
+    switch (action) {
+      case "reconnect":
+        return this.reconnectService(serviceId);
+      case "enable":
+        return this.setServiceEnabled(serviceId, true);
+      case "disable":
+        return this.setServiceEnabled(serviceId, false);
+      default:
+        throw new Error(`Unsupported service action '${action satisfies never}'.`);
+    }
+  }
+
+  /**
    * Disposes all downstream clients during shutdown.
    */
   public async dispose(): Promise<void> {
     await disposeClientMap(this.clients);
     this.clients.clear();
+  }
+
+  /**
+   * Reconnects one currently configured service and refreshes its metadata snapshot.
+   */
+  private async reconnectService(serviceId: string): Promise<ManageServiceResult> {
+    const snapshot = this.requireService(serviceId);
+    const currentClient = this.clients.get(serviceId);
+    if (!currentClient) {
+      throw new Error(`Service '${serviceId}' is unavailable.`);
+    }
+
+    const nextClient = new StdioMcpClient(snapshot.config, this.logger);
+
+    try {
+      await currentClient.dispose().catch(() => undefined);
+      const metadata = await nextClient.getMetadata();
+
+      snapshot.metadata = metadata;
+      snapshot.runtime = {
+        available: true,
+        lastError: null,
+        lastConnectedAt: new Date().toISOString(),
+        restartAttempts: nextClient.restartCount
+      };
+      this.clients.set(serviceId, nextClient);
+
+      return {
+        serviceId,
+        action: "reconnect",
+        enabled: true,
+        available: true
+      };
+    } catch (error) {
+      await nextClient.dispose().catch(() => undefined);
+      const message = error instanceof Error ? error.message : String(error);
+
+      snapshot.runtime = {
+        available: false,
+        lastError: message,
+        lastConnectedAt: snapshot.runtime.lastConnectedAt,
+        restartAttempts: currentClient.restartCount
+      };
+      this.clients.set(serviceId, currentClient);
+
+      return {
+        serviceId,
+        action: "reconnect",
+        enabled: true,
+        available: false
+      };
+    }
+  }
+
+  /**
+   * Persists the service enable flag to the config file and reloads the registry.
+   */
+  private async setServiceEnabled(serviceId: string, enabled: boolean): Promise<ManageServiceResult> {
+    const rawConfig = await readRawConfig(this.configPath);
+    if (!Array.isArray(rawConfig.services)) {
+      throw new Error("The 'services' field must be an array.");
+    }
+
+    const service = rawConfig.services.find((candidate) => isRecord(candidate) && candidate.serviceId === serviceId);
+    if (!service || !isRecord(service)) {
+      throw new Error(`Unknown service '${serviceId}'.`);
+    }
+
+    service.enable = enabled;
+    await writeFile(resolve(this.configPath), `${JSON.stringify(rawConfig, null, 2)}\n`, "utf8");
+    await this.reload();
+
+    return {
+      serviceId,
+      action: enabled ? "enable" : "disable",
+      enabled,
+      available: enabled ? (this.getService(serviceId)?.runtime.available ?? false) : false
+    };
   }
 
   /**
@@ -286,6 +384,28 @@ export interface CallToolResult {
 }
 
 /**
+ * Describes the compact result returned from a service management action.
+ */
+export interface ManageServiceResult {
+  /**
+   * Identifies the logical service targeted by the action.
+   */
+  serviceId: string;
+  /**
+   * Echoes the applied management action.
+   */
+  action: "reconnect" | "enable" | "disable";
+  /**
+   * Indicates whether the service is enabled in the persisted config after the action.
+   */
+  enabled: boolean;
+  /**
+   * Indicates whether the service is currently available after the action.
+   */
+  available: boolean;
+}
+
+/**
  * Disposes all clients in one map.
  */
 async function disposeClientMap(clientMap: Map<string, StdioMcpClient>): Promise<void> {
@@ -304,4 +424,23 @@ async function disposeRemovedClients(previous: Map<string, StdioMcpClient>, next
     }
   }
   await Promise.all(removed.map((client) => client.dispose().catch(() => undefined)));
+}
+
+/**
+ * Loads the raw config document for management edits that must preserve disabled services.
+ */
+async function readRawConfig(configPath: string): Promise<Record<string, unknown>> {
+  const rawText = await readFile(resolve(configPath), "utf8");
+  const parsed = JSON.parse(rawText) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error("The gateway config must be a JSON object.");
+  }
+  return parsed;
+}
+
+/**
+ * Checks whether a value is a plain record.
+ */
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return typeof input === "object" && input !== null && !Array.isArray(input);
 }

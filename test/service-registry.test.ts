@@ -102,3 +102,94 @@ test("ServiceRegistry removes disabled services on reload", async () => {
 
   await registry.dispose();
 });
+
+test("ServiceRegistry can disable and re-enable a service through manageService", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
+  const configPath = join(tempDir, "config.json");
+  const echoServicePath = join(process.cwd(), "examples", "echo-service.ts");
+
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      services: [
+        {
+          serviceId: "demo-echo",
+          name: "Demo Echo",
+          transport: {
+            type: "stdio",
+            command: "node",
+            args: ["--experimental-strip-types", echoServicePath],
+            cwd: process.cwd()
+          }
+        }
+      ]
+    }),
+    "utf8"
+  );
+
+  const registry = new ServiceRegistry(configPath, new ConfigLoader(), new Logger());
+  await registry.initialize();
+
+  const disabled = await registry.manageService("demo-echo", "disable");
+  assert.deepEqual(disabled, {
+    serviceId: "demo-echo",
+    action: "disable",
+    enabled: false,
+    available: false
+  });
+  assert.equal(registry.getService("demo-echo"), null);
+
+  const enabled = await registry.manageService("demo-echo", "enable");
+  assert.equal(enabled.serviceId, "demo-echo");
+  assert.equal(enabled.action, "enable");
+  assert.equal(enabled.enabled, true);
+  assert.equal(enabled.available, true);
+  assert.equal(registry.getService("demo-echo")?.runtime.available, true);
+
+  await registry.dispose();
+});
+
+test("ServiceRegistry can reconnect an unavailable service", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
+  const configPath = join(tempDir, "config.json");
+  const echoServicePath = join(process.cwd(), "examples", "echo-service.ts");
+
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      services: [
+        {
+          serviceId: "demo-echo",
+          name: "Demo Echo",
+          transport: {
+            type: "stdio",
+            command: "node",
+            args: ["--experimental-strip-types", echoServicePath],
+            cwd: process.cwd()
+          }
+        }
+      ]
+    }),
+    "utf8"
+  );
+
+  const registry = new ServiceRegistry(configPath, new ConfigLoader(), new Logger());
+  await registry.initialize();
+
+  const snapshot = registry.getService("demo-echo");
+  assert.ok(snapshot);
+  snapshot.runtime.available = false;
+  snapshot.runtime.lastError = "forced test failure";
+
+  const result = await registry.manageService("demo-echo", "reconnect");
+  assert.deepEqual(result, {
+    serviceId: "demo-echo",
+    action: "reconnect",
+    enabled: true,
+    available: true
+  });
+  assert.equal(registry.getService("demo-echo")?.runtime.available, true);
+  assert.equal(registry.getService("demo-echo")?.runtime.lastError, null);
+
+  await registry.dispose();
+});

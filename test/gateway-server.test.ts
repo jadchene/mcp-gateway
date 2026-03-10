@@ -155,12 +155,42 @@ test("GatewayServer waits for the startup barrier before handling tool calls", a
   assert.equal(wroteResponse, true);
 });
 
+test("GatewayServer exposes a compact manageService payload", async () => {
+  const registry = createRegistryStub({
+    manageService: async () => ({
+      serviceId: "idea",
+      action: "reconnect",
+      enabled: true,
+      available: false
+    })
+  });
+  const server = createGatewayServerForTest(registry);
+
+  const result = await (server as unknown as { manageService: (args: Record<string, unknown>) => Promise<{ structuredContent?: Record<string, unknown> }> }).manageService({
+    serviceId: "idea",
+    action: "reconnect"
+  });
+
+  assert.deepEqual(result.structuredContent, {
+    serviceId: "idea",
+    action: "reconnect",
+    enabled: true,
+    available: false
+  });
+});
+
 function createRegistryStub(overrides: {
   tools?: ToolDefinition[];
   callTool?: (serviceId: string, toolName: string, args: Record<string, unknown>) => Promise<{
     result: unknown;
     durationMs: number;
     restartAttempts: number;
+  }>;
+  manageService?: (serviceId: string, action: "reconnect" | "enable" | "disable") => Promise<{
+    serviceId: string;
+    action: "reconnect" | "enable" | "disable";
+    enabled: boolean;
+    available: boolean;
   }>;
 }): {
   listServices: () => ServiceRuntimeSnapshot[];
@@ -171,6 +201,12 @@ function createRegistryStub(overrides: {
     result: unknown;
     durationMs: number;
     restartAttempts: number;
+  }>;
+  manageService: (serviceId: string, action: "reconnect" | "enable" | "disable") => Promise<{
+    serviceId: string;
+    action: "reconnect" | "enable" | "disable";
+    enabled: boolean;
+    available: boolean;
   }>;
 } {
   const snapshot: ServiceRuntimeSnapshot = {
@@ -210,6 +246,12 @@ function createRegistryStub(overrides: {
       result: {},
       durationMs: 0,
       restartAttempts: 0
+    })),
+    manageService: overrides.manageService ?? (async (serviceId, action) => ({
+      serviceId,
+      action,
+      enabled: action !== "disable",
+      available: false
     }))
   };
 }
