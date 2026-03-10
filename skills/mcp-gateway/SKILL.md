@@ -1,6 +1,6 @@
 ---
 name: mcp-gateway
-description: Use the MCP gateway for token-efficient discovery of downstream MCP services, tool lists, tool schemas, and forwarded tool calls. Prefer this skill when the gateway exposes a fixed discovery surface instead of flattening all downstream tools.
+description: Use the MCP gateway for token-efficient discovery of downstream MCP services, tool lists, tool schemas, and forwarded tool calls. Prefer the default four-tool workflow and use detailed service inspection only for explicit diagnosis.
 ---
 
 # MCP Gateway
@@ -22,6 +22,12 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 3. Call `gateway.getToolSchema(serviceId, toolName)` only before the first use of that tool, or when arguments are unclear.
 4. Call `gateway.callTool(serviceId, toolName, arguments)` for execution.
 5. Re-discover only when a call fails, service availability changes, or the task clearly requires fresh metadata.
+
+## Diagnostic Exception
+
+- Treat `gateway.getService` as a diagnostic tool, not part of the default workflow.
+- Use it only when the user explicitly asks to inspect service health, connection state, protocol details, or recent service errors.
+- Do not call it during normal task execution when the four-tool flow is sufficient.
 
 ## Response Shape Expectations
 

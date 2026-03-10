@@ -44,14 +44,7 @@
 
 ### 2. 给多个 Agent 提供统一的 MCP 接入入口
 
-如果没有网关，每个 Agent 往往都要单独配置一遍这些 MCP：
-
-- database MCP
-- SSH MCP
-- IDE MCP
-- Playwright MCP
-- Gitea MCP
-- 以及其他服务
+如果没有网关，每个 Agent 往往都要分别配置多个下游 MCP 服务。
 
 这种方式很快会带来维护问题：
 
@@ -270,6 +263,7 @@ args = ["--config", "./config.json"]
 - 真实本地配置和日志建议放在仓库外
 - 只有下游服务自己暴露了 `outputSchema` 时，网关才会返回它
 - Windows 下支持解析 PowerShell shim 命令，例如实际落到 `.ps1` 的全局命令
+- 在 Windows 上，网关会优先使用 `pwsh` 解析和执行 `.ps1` shim；如果机器上没有 `pwsh`，会自动回退到 `powershell.exe`
 
 ## License
 

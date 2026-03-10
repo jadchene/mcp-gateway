@@ -1,6 +1,6 @@
 {
   "name": "@jadchene/mcp-gateway-service",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A token-efficient MCP gateway that provides one unified entry point for multiple downstream MCP services.",
   "type": "module",
   "main": "dist/index.js",

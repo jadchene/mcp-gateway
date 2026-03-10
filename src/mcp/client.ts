@@ -366,7 +366,7 @@ export class StdioMcpClient {
       },
       clientInfo: {
         name: "mcp-gateway",
-        version: "0.2.1"
+        version: "0.2.2"
       }
     });
 
@@ -531,8 +531,13 @@ function resolveCommandSpec(command: string, args: string[]): { command: string;
   const powershellResolved = resolveViaPowerShell(command);
   if (powershellResolved) {
     if (powershellResolved.toLowerCase().endsWith(".ps1")) {
+      const powerShellHost = resolvePowerShellHost();
+      if (!powerShellHost) {
+        return { command, args };
+      }
+
       return {
-        command: "pwsh",
+        command: powerShellHost,
         args: ["-File", powershellResolved, ...args]
       };
     }
@@ -559,8 +564,13 @@ function resolveCommandSpec(command: string, args: string[]): { command: string;
     }
 
     if (preferred.toLowerCase().endsWith(".ps1")) {
+      const powerShellHost = resolvePowerShellHost();
+      if (!powerShellHost) {
+        return { command, args };
+      }
+
       return {
-        command: "pwsh",
+        command: powerShellHost,
         args: ["-File", preferred, ...args]
       };
     }
@@ -578,8 +588,13 @@ function resolveCommandSpec(command: string, args: string[]): { command: string;
  * Resolves a command name through PowerShell so script shims map to their real targets.
  */
 function resolveViaPowerShell(command: string): string | null {
+  const powerShellHost = resolvePowerShellHost();
+  if (!powerShellHost) {
+    return null;
+  }
+
   try {
-    const output = execFileSync("pwsh", [
+    const output = execFileSync(powerShellHost, [
       "-NoProfile",
       "-Command",
       `(Get-Command '${escapePowerShellSingleQuotedString(command)}' -ErrorAction Stop).Source`
@@ -596,10 +611,41 @@ function resolveViaPowerShell(command: string): string | null {
 }
 
 /**
+ * Resolves the preferred PowerShell host on Windows.
+ */
+export function resolvePowerShellHost(
+  probe: (command: string) => boolean = commandExists
+): string | null {
+  if (probe("pwsh")) {
+    return "pwsh";
+  }
+
+  if (probe("powershell.exe")) {
+    return "powershell.exe";
+  }
+
+  return null;
+}
+
+/**
  * Escapes a string for use inside a single-quoted PowerShell literal.
  */
 function escapePowerShellSingleQuotedString(value: string): string {
   return value.replace(/'/g, "''");
+}
+
+/**
+ * Checks whether a command exists in the current PATH.
+ */
+function commandExists(command: string): boolean {
+  try {
+    execFileSync("where.exe", [command], {
+      stdio: ["ignore", "ignore", "ignore"]
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -38,14 +38,7 @@ That means the model only sees the minimum amount of MCP metadata needed for the
 
 ### 2. Provide one unified MCP entry point for multiple agents
 
-Without a gateway, each agent usually needs its own MCP client configuration for every downstream service:
-
-- database MCP
-- SSH MCP
-- IDE MCP
-- Playwright MCP
-- Gitea MCP
-- and more
+Without a gateway, each agent usually needs its own MCP client configuration for multiple downstream services.
 
 That quickly becomes hard to maintain:
 
@@ -268,6 +261,7 @@ args = ["--config", "./config.json"]
 - Keep real local configs and logs outside the repository.
 - Downstream output schema is returned only when the downstream service exposes it.
 - Windows command resolution supports PowerShell shims such as `.ps1`-backed command aliases.
+- On Windows, the gateway prefers `pwsh` for `.ps1` shim resolution and execution, and automatically falls back to `powershell.exe` when `pwsh` is unavailable.
 
 ## License
 
