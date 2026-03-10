@@ -18,6 +18,10 @@ test("validateGatewayConfig accepts a minimal valid stdio config", () => {
 
   assert.equal(config.services[0]?.serviceId, "demo");
   assert.equal(config.services[0]?.enable, true);
+  assert.deepEqual(config.logging, {
+    enable: false,
+    path: null
+  });
 });
 
 test("validateGatewayConfig rejects duplicate service identifiers", () => {
@@ -85,4 +89,46 @@ test("validateGatewayConfig filters disabled services and keeps enabled ones", (
     config.services.map((service) => service.serviceId),
     ["enabled-demo"]
   );
+});
+
+test("validateGatewayConfig resolves an enabled log file path from the config directory", () => {
+  const config = validateGatewayConfig({
+    logging: {
+      enable: true,
+      path: "./logs/gateway.log"
+    },
+    services: [
+      {
+        serviceId: "demo",
+        name: "Demo",
+        transport: {
+          type: "stdio",
+          command: "node"
+        }
+      }
+    ]
+  }, "E:/Study/mcp-gateway");
+
+  assert.equal(config.logging.enable, true);
+  assert.equal(config.logging.path, "E:\\Study\\mcp-gateway\\logs\\gateway.log");
+});
+
+test("validateGatewayConfig rejects enabled logging without a path", () => {
+  assert.throws(() => {
+    validateGatewayConfig({
+      logging: {
+        enable: true
+      },
+      services: [
+        {
+          serviceId: "demo",
+          name: "Demo",
+          transport: {
+            type: "stdio",
+            command: "node"
+          }
+        }
+      ]
+    });
+  }, /logging\.path/);
 });

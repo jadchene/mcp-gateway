@@ -1,4 +1,8 @@
 {
+  "logging": {
+    "enable": false,
+    "path": "./logs/mcp-gateway.log"
+  },
   "services": [
     {
       "serviceId": "demo-echo",

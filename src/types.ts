@@ -18,9 +18,27 @@ export type StdioFraming = "line" | "content-length";
  */
 export interface GatewayConfig {
   /**
+   * Declares the file logging behavior for the gateway process.
+   */
+  logging: LoggingConfig;
+  /**
    * Lists all logical MCP services managed by the gateway.
    */
   services: ServiceConfig[];
+}
+
+/**
+ * Declares the file logging behavior for the gateway process.
+ */
+export interface LoggingConfig {
+  /**
+   * Indicates whether structured file logging is enabled.
+   */
+  enable: boolean;
+  /**
+   * Provides the absolute file path used for log appends when logging is enabled.
+   */
+  path: string | null;
 }
 
 /**

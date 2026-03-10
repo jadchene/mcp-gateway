@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigLoader } from "../src/config.ts";
@@ -190,6 +190,73 @@ test("ServiceRegistry can reconnect an unavailable service", async () => {
   });
   assert.equal(registry.getService("demo-echo")?.runtime.available, true);
   assert.equal(registry.getService("demo-echo")?.runtime.lastError, null);
+
+  await registry.dispose();
+});
+
+test("ServiceRegistry hot reload updates the active log file target", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
+  const configPath = join(tempDir, "config.json");
+  const firstLogPath = join(tempDir, "logs", "first.log");
+  const secondLogPath = join(tempDir, "logs", "second.log");
+  const echoServicePath = join(process.cwd(), "examples", "echo-service.ts");
+
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      logging: {
+        enable: true,
+        path: "./logs/first.log"
+      },
+      services: [
+        {
+          serviceId: "demo-echo",
+          name: "Demo Echo",
+          transport: {
+            type: "stdio",
+            command: "node",
+            args: ["--experimental-strip-types", echoServicePath],
+            cwd: process.cwd()
+          }
+        }
+      ]
+    }),
+    "utf8"
+  );
+
+  const registry = new ServiceRegistry(configPath, new ConfigLoader(), new Logger());
+  await registry.initialize();
+
+  const firstLogContent = await readFile(firstLogPath, "utf8");
+  assert.match(firstLogContent, /config\.reload\.succeeded/);
+
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      logging: {
+        enable: true,
+        path: "./logs/second.log"
+      },
+      services: [
+        {
+          serviceId: "demo-echo",
+          name: "Demo Echo",
+          transport: {
+            type: "stdio",
+            command: "node",
+            args: ["--experimental-strip-types", echoServicePath],
+            cwd: process.cwd()
+          }
+        }
+      ]
+    }),
+    "utf8"
+  );
+
+  await registry.reload();
+
+  const secondLogContent = await readFile(secondLogPath, "utf8");
+  assert.match(secondLogContent, /config\.reload\.succeeded/);
 
   await registry.dispose();
 });

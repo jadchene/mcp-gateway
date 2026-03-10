@@ -27,7 +27,13 @@ export class ServiceRegistry {
   /**
    * Stores the last valid config snapshot.
    */
-  private currentConfig: GatewayConfig = { services: [] };
+  private currentConfig: GatewayConfig = {
+    logging: {
+      enable: false,
+      path: null
+    },
+    services: []
+  };
 
   /**
    * Stores the current immutable runtime view used by request handlers.
@@ -73,6 +79,7 @@ export class ServiceRegistry {
       this.logger.info("config.reload.started", { configPath: absolutePath });
 
       const nextConfig = await this.configLoader.load(absolutePath);
+      this.logger.configure(nextConfig.logging);
       const nextSnapshots = new Map<string, ServiceRuntimeSnapshot>();
       const nextClients = new Map<string, StdioMcpClient>();
 

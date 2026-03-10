@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import type { GatewayConfig, ServiceConfig, StdioFraming, StdioTransportConfig } from "./types.ts";
+import { dirname, resolve } from "node:path";
+import type { GatewayConfig, LoggingConfig, ServiceConfig, StdioFraming, StdioTransportConfig } from "./types.ts";
 
 /**
  * Provides config loading and validation for the gateway service pool definition.
@@ -13,14 +13,14 @@ export class ConfigLoader {
     const absolutePath = resolve(configPath);
     const rawText = await readFile(absolutePath, "utf8");
     const parsed = JSON.parse(rawText) as unknown;
-    return validateGatewayConfig(parsed);
+    return validateGatewayConfig(parsed, dirname(absolutePath));
   }
 }
 
 /**
  * Validates the top-level config object and normalizes optional fields.
  */
-export function validateGatewayConfig(input: unknown): GatewayConfig {
+export function validateGatewayConfig(input: unknown, baseDir = process.cwd()): GatewayConfig {
   if (!isRecord(input)) {
     throw new Error("The gateway config must be a JSON object.");
   }
@@ -40,7 +40,43 @@ export function validateGatewayConfig(input: unknown): GatewayConfig {
   }
 
   return {
+    logging: validateLoggingConfig(input.logging, baseDir),
     services: services.filter((service) => service.enable)
+  };
+}
+
+/**
+ * Validates the optional logging config and resolves the log path.
+ */
+function validateLoggingConfig(input: unknown, baseDir: string): LoggingConfig {
+  if (input === undefined) {
+    return {
+      enable: false,
+      path: null
+    };
+  }
+
+  if (!isRecord(input)) {
+    throw new Error("The 'logging' field must be a JSON object when present.");
+  }
+
+  const enable = optionalBoolean(input.enable, "logging.enable") ?? false;
+  const path = optionalString(input.path, "logging.path");
+
+  if (!enable) {
+    return {
+      enable: false,
+      path: path ? resolve(baseDir, path) : null
+    };
+  }
+
+  if (!path || path.trim() === "") {
+    throw new Error("The 'logging.path' field must be a non-empty string when logging is enabled.");
+  }
+
+  return {
+    enable: true,
+    path: resolve(baseDir, path)
   };
 }
 

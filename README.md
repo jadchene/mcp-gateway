@@ -135,6 +135,11 @@ The gateway currently supports `stdio` downstream transports only.
 
 A service is loaded only when `enable` is missing or set to `true`. If `enable` is set to `false`, the gateway skips that service entirely. During hot reload, disabling or removing a service also stops its existing downstream process if one is running.
 
+- `logging.enable` is optional and defaults to `false`.
+- `logging.path` is required only when `logging.enable` is `true`.
+- When enabled, the gateway writes newline-delimited JSON logs to the configured file and never writes operational logs to MCP `stdout` or `stderr`.
+- Relative `logging.path` values are resolved from the config file directory.
+- Logging config supports hot reload, so changing `logging.enable` or `logging.path` in the config file takes effect without restarting the gateway.
 - `enable` is optional. When omitted, the gateway treats the service as enabled.
 - `cwd` is optional. When omitted, the gateway uses its current working directory.
 - `env` is optional.
@@ -144,6 +149,10 @@ A service is loaded only when `enable` is missing or set to `true`. If `enable` 
 
 ```json
 {
+  "logging": {
+    "enable": false,
+    "path": "./logs/mcp-gateway.log"
+  },
   "services": [
     {
       "serviceId": "demo-echo",
@@ -289,6 +298,7 @@ args = ["--config", "./config.json"]
 - Repository-managed `config.json` and `config.example.json` are examples only.
 - Copy `config.example.json` to your own local `config.json` before running the gateway.
 - Keep real local configs and logs outside the repository.
+- File logging is disabled by default so MCP startup stays quiet unless you explicitly enable it.
 - Downstream output schema is returned only when the downstream service exposes it.
 - Windows command resolution supports PowerShell shims such as `.ps1`-backed command aliases.
 - On Windows, the gateway prefers `pwsh` for `.ps1` shim resolution and execution, and automatically falls back to `powershell.exe` when `pwsh` is unavailable.

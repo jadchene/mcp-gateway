@@ -141,6 +141,11 @@ mcp-gateway-service -v
 
 只有当 `enable` 未填写或显式为 `true` 时，服务才会被加载；如果 `enable` 为 `false`，网关会跳过该服务。热刷新时，如果某个服务被禁用或从配置中删除，网关也会停掉它当前已启动的下游进程。
 
+- `logging.enable` 可选，默认是 `false`
+- 只有当 `logging.enable` 为 `true` 时，`logging.path` 才是必填
+- 启用后，网关会把换行分隔的 JSON 日志写入指定文件，不再把运行日志写到 MCP 的 `stdout` 或 `stderr`
+- 相对 `logging.path` 会按配置文件所在目录解析
+- 日志配置支持热更新，直接修改 `logging.enable` 或 `logging.path` 并保存即可生效，无需重启网关
 - `enable` 可选，不填时默认按启用处理
 - `cwd` 可选，不填时使用当前工作目录
 - `env` 可选
@@ -148,6 +153,10 @@ mcp-gateway-service -v
 
 ```json
 {
+  "logging": {
+    "enable": false,
+    "path": "./logs/mcp-gateway.log"
+  },
   "services": [
     {
       "serviceId": "demo-echo",
@@ -291,6 +300,7 @@ args = ["--config", "./config.json"]
 - 仓库只保留 `config.example.json` 作为示例
 - 运行前请自行复制一份本地 `config.json`
 - 真实本地配置和日志建议放在仓库外
+- 默认关闭文件日志，避免 MCP 启动阶段产生额外标准流输出
 - 只有下游服务自己暴露了 `outputSchema` 时，网关才会返回它
 - Windows 下支持解析 PowerShell shim 命令，例如实际落到 `.ps1` 的全局命令
 - 在 Windows 上，网关会优先使用 `pwsh` 解析和执行 `.ps1` shim；如果机器上没有 `pwsh`，会自动回退到 `powershell.exe`
