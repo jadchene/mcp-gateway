@@ -9,6 +9,11 @@ import { ServiceRegistry } from "./service-registry.ts";
 import { VERSION } from "./version.ts";
 
 /**
+ * Lists OS signals that should trigger a graceful gateway shutdown.
+ */
+export const SHUTDOWN_SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+
+/**
  * Boots the MCP gateway process and wires config reload handling.
  */
 class Application {
@@ -80,25 +85,28 @@ class Application {
       process.exit(0);
     };
 
-    process.on("SIGINT", () => void shutdown("SIGINT"));
-    process.on("SIGTERM", () => void shutdown("SIGTERM"));
+    for (const signal of SHUTDOWN_SIGNALS) {
+      process.on(signal, () => void shutdown(signal));
+    }
     process.stdin.on("end", () => void shutdown("stdin-end"));
     process.stdin.on("close", () => void shutdown("stdin-close"));
   }
 }
 
-const application = new Application();
+if (import.meta.main) {
+  const application = new Application();
 
-if (process.argv.includes("-v") || process.argv.includes("--version")) {
-  process.stdout.write(`${VERSION}\n`);
-  process.exit(0);
+  if (process.argv.includes("-v") || process.argv.includes("--version")) {
+    process.stdout.write(`${VERSION}\n`);
+    process.exit(0);
+  }
+
+  void application.start().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exit(1);
+  });
 }
-
-void application.start().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
-  process.exit(1);
-});
 
 function getConfigPath(): string {
   const args = process.argv.slice(2);
