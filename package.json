@@ -1,6 +1,6 @@
 {
   "name": "@jadchene/mcp-gateway-service",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A token-efficient MCP gateway that provides one unified entry point for multiple downstream MCP services.",
   "type": "module",
   "main": "dist/index.js",
@@ -9,6 +9,14 @@
   },
   "license": "MIT",
   "author": "jadchene",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jadchene/mcp-gateway.git"
+  },
+  "homepage": "https://github.com/jadchene/mcp-gateway#readme",
+  "bugs": {
+    "url": "https://github.com/jadchene/mcp-gateway/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "node --experimental-strip-types src/index.ts",
