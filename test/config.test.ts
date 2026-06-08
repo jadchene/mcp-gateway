@@ -132,3 +132,41 @@ test("validateGatewayConfig rejects enabled logging without a path", () => {
     });
   }, /logging\.path/);
 });
+
+test("validateGatewayConfig accepts Streamable HTTP downstream transport config", () => {
+  const config = validateGatewayConfig({
+    services: [
+      {
+        serviceId: "http-demo",
+        name: "HTTP Demo",
+        transport: {
+          type: "http",
+          url: "http://127.0.0.1:3200/mcp",
+          headers: {
+            Authorization: "Bearer test"
+          },
+          enableJsonResponse: true
+        }
+      }
+    ]
+  });
+
+  assert.equal(config.services[0]?.transport.type, "http");
+});
+
+test("validateGatewayConfig rejects invalid Streamable HTTP downstream settings", () => {
+  assert.throws(() => {
+    validateGatewayConfig({
+      services: [
+        {
+          serviceId: "http-demo",
+          name: "HTTP Demo",
+          transport: {
+            type: "http",
+            url: "file:///tmp/mcp"
+          }
+        }
+      ]
+    });
+  }, /valid http or https URL/);
+});

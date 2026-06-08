@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GatewayServer } from "../src/gateway-server.ts";
+import { McpGatewayEngine } from "../src/gateway-engine.ts";
 import { Logger } from "../src/logger.ts";
 import type { ServiceRuntimeSnapshot, ToolDefinition } from "../src/types.ts";
 
-test("GatewayServer returns a compact tool schema payload", () => {
+test("McpGatewayEngine returns a compact tool schema payload", () => {
   const tool: ToolDefinition = {
     name: "browser_tabs",
     description: "List tabs",
@@ -20,9 +20,9 @@ test("GatewayServer returns a compact tool schema payload", () => {
   const registry = createRegistryStub({
     tools: [tool]
   });
-  const server = createGatewayServerForTest(registry);
+  const engine = createGatewayEngineForTest(registry);
 
-  const result = (server as unknown as { getToolSchema: (args: Record<string, unknown>) => unknown }).getToolSchema({
+  const result = engine.getToolSchema({
     serviceId: "playwright",
     toolName: "browser_tabs"
   }) as { structuredContent?: Record<string, unknown> };
@@ -33,13 +33,16 @@ test("GatewayServer returns a compact tool schema payload", () => {
   });
 });
 
-test("GatewayServer returns a minimal service list payload", () => {
+test("McpGatewayEngine returns a minimal service list payload", () => {
   const registry = createRegistryStub({
     tools: []
   });
-  const server = createGatewayServerForTest(registry);
+  const engine = createGatewayEngineForTest(registry);
 
-  const result = (server as unknown as { handleToolCall: (request: { params: Record<string, unknown> }) => Promise<unknown> }).handleToolCall({
+  const result = engine.handleToolCall({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
     params: {
       name: "gateway.listServices",
       arguments: {}
@@ -59,7 +62,7 @@ test("GatewayServer returns a minimal service list payload", () => {
   });
 });
 
-test("GatewayServer forwards downstream tool results without extra gateway wrapping", async () => {
+test("McpGatewayEngine forwards downstream tool results without extra gateway wrapping", async () => {
   const downstreamResult = {
     content: [
       {
@@ -79,9 +82,9 @@ test("GatewayServer forwards downstream tool results without extra gateway wrapp
       restartAttempts: 0
     })
   });
-  const server = createGatewayServerForTest(registry);
+  const engine = createGatewayEngineForTest(registry);
 
-  const result = await (server as unknown as { callDownstreamTool: (args: Record<string, unknown>) => Promise<unknown> }).callDownstreamTool({
+  const result = await engine.callDownstreamTool({
     serviceId: "demo",
     toolName: "echo",
     arguments: {
@@ -92,13 +95,12 @@ test("GatewayServer forwards downstream tool results without extra gateway wrapp
   assert.deepEqual(result, downstreamResult);
 });
 
-test("GatewayServer waits for the startup barrier before handling tool calls", async () => {
+test("McpGatewayEngine waits for the startup barrier before handling tool calls", async () => {
   let releaseBarrier: (() => void) | null = null;
   const startupBarrier = new Promise<void>((resolve) => {
     releaseBarrier = resolve;
   });
   let called = false;
-  let wroteResponse = false;
 
   const registry = createRegistryStub({
     callTool: async () => {
@@ -112,25 +114,11 @@ test("GatewayServer waits for the startup barrier before handling tool calls", a
       };
     }
   });
-  const server = createGatewayServerForTest(registry) as GatewayServer & {
-    startupBarrier: Promise<void>;
-    writer: { write: (message: unknown) => void };
-    handleRequest: (request: {
-      jsonrpc: "2.0";
-      id: number;
-      method: string;
-      params: Record<string, unknown>;
-    }) => Promise<void>;
-  };
+  const engine = createGatewayEngineForTest(registry);
+  engine.setStartupBarrier(startupBarrier);
 
-  server.startupBarrier = startupBarrier;
-  server.writer = {
-    write: () => {
-      wroteResponse = true;
-    }
-  };
-
-  const pending = server.handleRequest({
+  let settled = false;
+  const pending = engine.handleRequest({
     jsonrpc: "2.0",
     id: 1,
     method: "tools/call",
@@ -142,20 +130,23 @@ test("GatewayServer waits for the startup barrier before handling tool calls", a
         arguments: {}
       }
     }
+  }).then((response) => {
+    settled = true;
+    return response;
   });
 
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(called, false);
-  assert.equal(wroteResponse, false);
+  assert.equal(settled, false);
 
   releaseBarrier?.();
-  await pending;
+  const response = await pending;
 
   assert.equal(called, true);
-  assert.equal(wroteResponse, true);
+  assert.equal(response?.id, 1);
 });
 
-test("GatewayServer exposes a compact manageService payload", async () => {
+test("McpGatewayEngine exposes a compact manageService payload", async () => {
   const registry = createRegistryStub({
     manageService: async () => ({
       serviceId: "idea",
@@ -164,9 +155,9 @@ test("GatewayServer exposes a compact manageService payload", async () => {
       available: false
     })
   });
-  const server = createGatewayServerForTest(registry);
+  const engine = createGatewayEngineForTest(registry);
 
-  const result = await (server as unknown as { manageService: (args: Record<string, unknown>) => Promise<{ structuredContent?: Record<string, unknown> }> }).manageService({
+  const result = await engine.manageService({
     serviceId: "idea",
     action: "reconnect"
   });
@@ -256,14 +247,6 @@ function createRegistryStub(overrides: {
   };
 }
 
-function createGatewayServerForTest(registry: ReturnType<typeof createRegistryStub>): GatewayServer {
-  const server = Object.create(GatewayServer.prototype) as GatewayServer & {
-    registry: ReturnType<typeof createRegistryStub>;
-    logger: Logger;
-    startupBarrier: Promise<void>;
-  };
-  server.registry = registry;
-  server.logger = new Logger();
-  server.startupBarrier = Promise.resolve();
-  return server;
+function createGatewayEngineForTest(registry: ReturnType<typeof createRegistryStub>): McpGatewayEngine {
+  return new McpGatewayEngine(registry as never, new Logger());
 }

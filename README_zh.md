@@ -104,6 +104,18 @@ mcp-gateway-service
 mcp-gateway-service --config ./config.json
 ```
 
+通过 CLI 参数同时暴露 Streamable HTTP 接口：
+
+```bash
+mcp-gateway-service --config ./config.json --http --port 3100 --path /mcp
+```
+
+如果 HTTP 客户端希望 `POST` 直接返回 JSON-RPC 响应，可以启用无状态 JSON 直返：
+
+```bash
+mcp-gateway-service --config ./config.json --http --port 3100 --json-response
+```
+
 ### 从源码运行
 
 先基于 `config.example.json` 自行创建本地 `config.json`，再启动网关：
@@ -137,7 +149,7 @@ mcp-gateway-service -v
 
 ## 配置格式
 
-当前只支持 `stdio` 类型的下游传输。
+当前支持 `stdio` 和 Streamable HTTP 类型的下游传输。网关自身的入站 Streamable HTTP 只通过 CLI 参数启用，不通过 `config.json` 启用，这样 stdio agent 可以安全共用同一份服务池配置，不会意外启动 HTTP 监听。
 
 只有当 `enable` 未填写或显式为 `true` 时，服务才会被加载；如果 `enable` 为 `false`，网关会跳过该服务。热刷新时，如果某个服务被禁用或从配置中删除，网关也会停掉它当前已启动的下游进程。
 
@@ -150,6 +162,9 @@ mcp-gateway-service -v
 - `cwd` 可选，不填时使用当前工作目录
 - `env` 可选
 - `framing` 可选，不填时先尝试 `line`，再尝试 `content-length`
+- HTTP 下游使用 `transport.type: "http"` 和一个 `transport.url`
+- `transport.headers` 可为 HTTP 下游提供静态请求头
+- `transport.enableJsonResponse` 可为 HTTP 下游启用无状态 JSON 直返模式
 
 ```json
 {
@@ -171,10 +186,34 @@ mcp-gateway-service -v
           "examples/echo-service.ts"
         ]
       }
+    },
+    {
+      "serviceId": "remote-http",
+      "enable": false,
+      "name": "Remote Streamable HTTP Service",
+      "description": "Example downstream MCP service over Streamable HTTP.",
+      "transport": {
+        "type": "http",
+        "url": "http://127.0.0.1:3200/mcp",
+        "headers": {
+          "Authorization": "Bearer replace-me"
+        },
+        "enableJsonResponse": false
+      }
     }
   ]
 }
 ```
+
+### Streamable HTTP 说明
+
+- 网关使用同一个 endpoint 处理 `GET` 和 `POST`
+- 入站 HTTP 只通过显式 `--http` CLI 参数启用，可搭配 `--port 3100 --path /mcp`
+- 只传 `--port`、`--host`、`--path` 或 `--json-response`，但不传 `--http` 时，不会启动 HTTP 监听
+- `GET /mcp` 打开 SSE 下行通道，并通过 `Mcp-Session-Id` 响应头返回 session
+- `POST /mcp` 发送 JSON-RPC 消息，推荐通过 `Mcp-Session-Id` 请求头绑定 session
+- 为兼容旧客户端，仍接受 query string 里的 `sessionId`，但新客户端应优先使用 header
+- `endpoint` SSE 事件只返回统一路径，例如 `/mcp`，不会把 session id 塞进 URL
 
 ## 对外网关工具
 

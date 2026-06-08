@@ -17,6 +17,20 @@
           "examples/echo-service.ts"
         ]
       }
+    },
+    {
+      "serviceId": "remote-http",
+      "enable": false,
+      "name": "Remote Streamable HTTP Service",
+      "description": "Example downstream MCP service over Streamable HTTP.",
+      "transport": {
+        "type": "http",
+        "url": "http://127.0.0.1:3200/mcp",
+        "headers": {
+          "Authorization": "Bearer replace-me"
+        },
+        "enableJsonResponse": false
+      }
     }
   ]
 }

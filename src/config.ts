@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import type { GatewayConfig, LoggingConfig, ServiceConfig, StdioFraming, StdioTransportConfig } from "./types.ts";
+import type { GatewayConfig, HttpTransportConfig, LoggingConfig, ServiceConfig, StdioFraming, TransportConfig } from "./types.ts";
 
 /**
  * Provides config loading and validation for the gateway service pool definition.
@@ -105,12 +105,16 @@ function validateServiceConfig(input: unknown): ServiceConfig {
 /**
  * Validates the supported transport definition.
  */
-function validateTransportConfig(serviceId: string, input: unknown): StdioTransportConfig {
+function validateTransportConfig(serviceId: string, input: unknown): TransportConfig {
   if (!isRecord(input)) {
     throw new Error(`Service '${serviceId}' transport must be a JSON object.`);
   }
 
   const type = requireNonEmptyString(input.type, `service '${serviceId}' transport.type`);
+  if (type === "http") {
+    return validateHttpTransportConfig(serviceId, input);
+  }
+
   if (type !== "stdio") {
     throw new Error(`Service '${serviceId}' uses unsupported transport type '${type}'.`);
   }
@@ -128,6 +132,28 @@ function validateTransportConfig(serviceId: string, input: unknown): StdioTransp
     cwd,
     env,
     framing
+  };
+}
+
+/**
+ * Validates a downstream Streamable HTTP transport definition.
+ */
+function validateHttpTransportConfig(serviceId: string, input: Record<string, unknown>): HttpTransportConfig {
+  const url = requireNonEmptyString(input.url, `service '${serviceId}' transport.url`);
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("invalid protocol");
+    }
+  } catch {
+    throw new Error(`The 'service ${serviceId} transport.url' field must be a valid http or https URL.`);
+  }
+
+  return {
+    type: "http",
+    url,
+    headers: optionalStringRecord(input.headers, `service '${serviceId}' transport.headers`),
+    enableJsonResponse: optionalBoolean(input.enableJsonResponse, `service '${serviceId}' transport.enableJsonResponse`)
   };
 }
 

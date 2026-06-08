@@ -6,7 +6,7 @@ export type JsonObject = Record<string, unknown>;
 /**
  * Declares the supported downstream transport types.
  */
-export type TransportConfig = StdioTransportConfig;
+export type TransportConfig = StdioTransportConfig | HttpTransportConfig;
 
 /**
  * Declares the supported stdio framing styles.
@@ -25,6 +25,32 @@ export interface GatewayConfig {
    * Lists all logical MCP services managed by the gateway.
    */
   services: ServiceConfig[];
+}
+
+/**
+ * Declares inbound Streamable HTTP gateway settings.
+ */
+export interface GatewayServerConfig {
+  /**
+   * Enables the Streamable HTTP server when true.
+   */
+  enable: boolean;
+  /**
+   * Provides the host address to bind.
+   */
+  host: string;
+  /**
+   * Provides the TCP port to listen on.
+   */
+  port: number;
+  /**
+   * Provides the single MCP endpoint path.
+   */
+  path: string;
+  /**
+   * Returns JSON-RPC responses directly from POST requests instead of SSE.
+   */
+  enableJsonResponse: boolean;
 }
 
 /**
@@ -95,6 +121,28 @@ export interface StdioTransportConfig {
    * Selects the stdio message framing style used by the downstream process.
    */
   framing?: StdioFraming;
+}
+
+/**
+ * Declares a Streamable HTTP-backed downstream transport.
+ */
+export interface HttpTransportConfig {
+  /**
+   * Marks the transport implementation kind.
+   */
+  type: "http";
+  /**
+   * Provides the downstream Streamable HTTP MCP endpoint URL.
+   */
+  url: string;
+  /**
+   * Provides optional static HTTP headers sent to the downstream service.
+   */
+  headers?: Record<string, string>;
+  /**
+   * Returns JSON-RPC results directly from POST requests when the downstream supports stateless mode.
+   */
+  enableJsonResponse?: boolean;
 }
 
 /**

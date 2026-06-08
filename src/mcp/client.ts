@@ -1,8 +1,10 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { resolve } from "node:path";
 import { Logger } from "../logger.ts";
+import { VERSION } from "../version.ts";
+import type { McpClient } from "./client-types.ts";
 import { createMessageReader, createMessageWriter, type JsonRpcFailure, type JsonRpcId, type JsonRpcMessage, type JsonRpcRequest, type JsonRpcSuccess } from "./protocol.ts";
-import type { ServiceConfig, ServiceMetadata, ToolDefinition } from "../types.ts";
+import type { ServiceConfig, ServiceMetadata, StdioTransportConfig, ToolDefinition } from "../types.ts";
 
 /**
  * Defines the default timeout applied to downstream JSON-RPC requests.
@@ -22,7 +24,7 @@ const PROCESS_EXIT_TIMEOUT_MS = 2_000;
 /**
  * Provides one reusable stdio-backed MCP client for a downstream service.
  */
-export class StdioMcpClient {
+export class StdioMcpClient implements McpClient {
   /**
    * Stores the bound service config.
    */
@@ -136,8 +138,9 @@ export class StdioMcpClient {
       return;
     }
 
-    const framingCandidates = this.service.transport.framing
-      ? [this.service.transport.framing]
+    const transport = requireStdioTransport(this.service);
+    const framingCandidates = transport.framing
+      ? [transport.framing]
       : ["line", "content-length"] as const;
 
     let lastError: Error | null = null;
@@ -150,7 +153,7 @@ export class StdioMcpClient {
         lastError = normalizeError(error);
         await this.disposeProcess();
 
-        if (this.service.transport.framing) {
+        if (transport.framing) {
           break;
         }
 
@@ -285,11 +288,7 @@ export class StdioMcpClient {
       return;
     }
 
-    if (this.service.transport.type !== "stdio") {
-      throw new Error(`Unsupported transport '${String((this.service.transport as { type?: unknown }).type)}'.`);
-    }
-
-    const transport = this.service.transport;
+    const transport = requireStdioTransport(this.service);
     const cwd = transport.cwd ? resolve(transport.cwd) : process.cwd();
     const commandSpec = resolveCommandSpec(transport.command, transport.args ?? []);
     const child = spawn(commandSpec.command, commandSpec.args, {
@@ -366,7 +365,7 @@ export class StdioMcpClient {
       },
       clientInfo: {
         name: "mcp-gateway",
-        version: "0.3.3"
+        version: VERSION
       }
     });
 
@@ -608,6 +607,16 @@ function resolveViaPowerShell(command: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Narrows a service config to its stdio transport.
+ */
+function requireStdioTransport(service: ServiceConfig): StdioTransportConfig {
+  if (service.transport.type !== "stdio") {
+    throw new Error(`Unsupported transport '${String((service.transport as { type?: unknown }).type)}'.`);
+  }
+  return service.transport;
 }
 
 /**

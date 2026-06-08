@@ -3,9 +3,12 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { ConfigLoader } from "./config.ts";
 import { ConfigFileWatcher } from "./file-watcher.ts";
+import { McpGatewayEngine } from "./gateway-engine.ts";
 import { GatewayServer } from "./gateway-server.ts";
+import { StreamableHttpGatewayServer } from "./http-server.ts";
 import { Logger } from "./logger.ts";
 import { ServiceRegistry } from "./service-registry.ts";
+import type { GatewayServerConfig } from "./types.ts";
 import { VERSION } from "./version.ts";
 
 /**
@@ -25,7 +28,12 @@ class Application {
   /**
    * Stores the config file path in use for the current process.
    */
-  private readonly configPath = resolve(getConfigPath());
+  private readonly cliOptions = parseCliArgs(process.argv.slice(2));
+
+  /**
+   * Stores the config file path in use for the current process.
+   */
+  private readonly configPath = resolve(this.cliOptions.configPath);
 
   /**
    * Stores the runtime service registry.
@@ -33,9 +41,19 @@ class Application {
   private readonly registry = new ServiceRegistry(this.configPath, new ConfigLoader(), this.logger);
 
   /**
+   * Stores the transport-neutral request engine shared by all inbound transports.
+   */
+  private readonly engine = new McpGatewayEngine(this.registry, this.logger);
+
+  /**
    * Stores the gateway server bound to stdin/stdout.
    */
-  private readonly server = new GatewayServer(this.registry, this.logger);
+  private readonly server = new GatewayServer(this.registry, this.logger, this.engine);
+
+  /**
+   * Stores the optional Streamable HTTP gateway server.
+   */
+  private httpServer: StreamableHttpGatewayServer | null = null;
 
   /**
    * Stores the file watcher used for config hot reload.
@@ -58,10 +76,18 @@ class Application {
     }
 
     const startup = this.registry.initialize();
-    this.server.setStartupBarrier(startup);
+    this.engine.setStartupBarrier(startup);
     this.server.start();
-    this.registerSignals();
     await startup;
+
+    const serverConfig = this.cliOptions.server;
+    this.registerSignals(Boolean(serverConfig));
+
+    if (serverConfig) {
+      this.httpServer = new StreamableHttpGatewayServer(serverConfig, this.engine, this.logger);
+      await this.httpServer.start();
+    }
+
     this.watcher.start();
 
     this.logger.info("gateway.started", {
@@ -72,7 +98,7 @@ class Application {
   /**
    * Registers signal handlers for graceful shutdown.
    */
-  private registerSignals(): void {
+  private registerSignals(httpEnabled: boolean): void {
     const shutdown = async (signal: NodeJS.Signals | "stdin-end" | "stdin-close"): Promise<void> => {
       if (this.shuttingDown) {
         return;
@@ -81,6 +107,7 @@ class Application {
 
       this.logger.info("gateway.stopping", { signal });
       this.watcher.stop();
+      await this.httpServer?.stop();
       await this.registry.dispose();
       process.exit(0);
     };
@@ -88,8 +115,10 @@ class Application {
     for (const signal of SHUTDOWN_SIGNALS) {
       process.on(signal, () => void shutdown(signal));
     }
-    process.stdin.on("end", () => void shutdown("stdin-end"));
-    process.stdin.on("close", () => void shutdown("stdin-close"));
+    if (!httpEnabled) {
+      process.stdin.on("end", () => void shutdown("stdin-end"));
+      process.stdin.on("close", () => void shutdown("stdin-close"));
+    }
   }
 }
 
@@ -108,12 +137,75 @@ if (import.meta.main) {
   });
 }
 
-function getConfigPath(): string {
-  const args = process.argv.slice(2);
-  const configIndex = args.indexOf("--config");
-  if (configIndex !== -1 && args[configIndex + 1]) {
-    return args[configIndex + 1]!;
-  }
+export function parseCliArgs(args: string[]): CliOptions {
+  const configPath = readOption(args, "--config") ?? process.env.MCP_GATEWAY_CONFIG ?? "config.json";
+  const port = readIntegerOption(args, "--port");
+  const host = readOption(args, "--host");
+  const path = readHttpPathOption(args);
+  const enableHttp = args.includes("--http");
+  const enableJsonResponse = args.includes("--json-response");
 
-  return process.env.MCP_GATEWAY_CONFIG ?? "config.json";
+  return {
+    configPath,
+    server: enableHttp
+      ? {
+          enable: true,
+          host: host ?? "127.0.0.1",
+          port: port ?? 3000,
+          path: path ?? "/mcp",
+          enableJsonResponse
+        }
+      : undefined
+  };
+}
+
+/**
+ * Reads a string option from argv.
+ */
+function readOption(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  if (index !== -1 && args[index + 1]) {
+    return args[index + 1];
+  }
+  return undefined;
+}
+
+/**
+ * Reads an integer option from argv.
+ */
+function readIntegerOption(args: string[], name: string): number | undefined {
+  const value = readOption(args, name);
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
+    throw new Error(`${name} must be an integer from 1 to 65535.`);
+  }
+  return parsed;
+}
+
+/**
+ * Reads and validates the inbound HTTP endpoint path option.
+ */
+function readHttpPathOption(args: string[]): string | undefined {
+  const path = readOption(args, "--path");
+  if (path === undefined) {
+    return undefined;
+  }
+  if (!path.startsWith("/")) {
+    throw new Error("--path must start with '/'.");
+  }
+  return path;
+}
+
+interface CliOptions {
+  /**
+   * Provides the gateway config file path.
+   */
+  configPath: string;
+  /**
+   * Provides optional CLI HTTP server overrides.
+   */
+  server?: GatewayServerConfig;
 }

@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { ConfigLoader } from "./config.ts";
 import { Logger } from "./logger.ts";
 import { StdioMcpClient } from "./mcp/client.ts";
+import type { McpClient } from "./mcp/client-types.ts";
+import { StreamableHttpClient } from "./mcp/http-client.ts";
 import type { GatewayConfig, ServiceConfig, ServiceMetadata, ServiceRuntimeSnapshot, ToolDefinition } from "./types.ts";
 
 /**
@@ -43,7 +45,7 @@ export class ServiceRegistry {
   /**
    * Stores reusable downstream clients keyed by service identifier.
    */
-  private clients = new Map<string, StdioMcpClient>();
+  private clients = new Map<string, McpClient>();
 
   /**
    * Prevents overlapping config reload operations.
@@ -81,7 +83,7 @@ export class ServiceRegistry {
       const nextConfig = await this.configLoader.load(absolutePath);
       this.logger.configure(nextConfig.logging);
       const nextSnapshots = new Map<string, ServiceRuntimeSnapshot>();
-      const nextClients = new Map<string, StdioMcpClient>();
+      const nextClients = new Map<string, McpClient>();
 
       try {
         for (const service of nextConfig.services) {
@@ -213,7 +215,7 @@ export class ServiceRegistry {
       throw new Error(`Service '${serviceId}' is unavailable.`);
     }
 
-    const nextClient = new StdioMcpClient(snapshot.config, this.logger);
+    const nextClient = createClient(snapshot.config, this.logger);
 
     try {
       await currentClient.dispose().catch(() => undefined);
@@ -284,11 +286,11 @@ export class ServiceRegistry {
   /**
    * Builds one runtime snapshot and initializes required metadata.
    */
-  private async buildServiceSnapshot(service: ServiceConfig, nextClients: Map<string, StdioMcpClient>): Promise<ServiceRuntimeSnapshot> {
+  private async buildServiceSnapshot(service: ServiceConfig, nextClients: Map<string, McpClient>): Promise<ServiceRuntimeSnapshot> {
     const reusedClient = this.clients.get(service.serviceId);
     const client = reusedClient && reusedClient.matchesConfig(service)
       ? reusedClient
-      : new StdioMcpClient(service, this.logger);
+      : createClient(service, this.logger);
     nextClients.set(service.serviceId, client);
 
     let metadata: ServiceMetadata = {
@@ -415,15 +417,15 @@ export interface ManageServiceResult {
 /**
  * Disposes all clients in one map.
  */
-async function disposeClientMap(clientMap: Map<string, StdioMcpClient>): Promise<void> {
+async function disposeClientMap(clientMap: Map<string, McpClient>): Promise<void> {
   await Promise.all([...clientMap.values()].map((client) => client.dispose().catch(() => undefined)));
 }
 
 /**
  * Disposes clients that no longer exist after a config swap.
  */
-async function disposeRemovedClients(previous: Map<string, StdioMcpClient>, next: Map<string, StdioMcpClient>): Promise<void> {
-  const removed: StdioMcpClient[] = [];
+async function disposeRemovedClients(previous: Map<string, McpClient>, next: Map<string, McpClient>): Promise<void> {
+  const removed: McpClient[] = [];
   for (const [key, client] of previous.entries()) {
     const nextClient = next.get(key);
     if (!nextClient || nextClient !== client) {
@@ -431,6 +433,20 @@ async function disposeRemovedClients(previous: Map<string, StdioMcpClient>, next
     }
   }
   await Promise.all(removed.map((client) => client.dispose().catch(() => undefined)));
+}
+
+/**
+ * Creates a downstream client implementation for one service config.
+ */
+function createClient(service: ServiceConfig, logger: Logger): McpClient {
+  switch (service.transport.type) {
+    case "stdio":
+      return new StdioMcpClient(service, logger);
+    case "http":
+      return new StreamableHttpClient(service, logger);
+    default:
+      throw new Error(`Unsupported transport '${String((service.transport as { type?: unknown }).type)}'.`);
+  }
 }
 
 /**

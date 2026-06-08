@@ -98,6 +98,18 @@ With an explicit config path:
 mcp-gateway-service --config ./config.json
 ```
 
+Expose the same gateway over Streamable HTTP with CLI arguments:
+
+```bash
+mcp-gateway-service --config ./config.json --http --port 3100 --path /mcp
+```
+
+Use `--json-response` when the HTTP client expects stateless JSON-RPC responses directly from `POST` requests:
+
+```bash
+mcp-gateway-service --config ./config.json --http --port 3100 --json-response
+```
+
 ### Run from source
 
 Create a local `config.json` from `config.example.json`, then start the gateway:
@@ -131,7 +143,7 @@ mcp-gateway-service -v
 
 ## Configuration
 
-The gateway currently supports `stdio` downstream transports only.
+The gateway supports `stdio` and Streamable HTTP downstream transports. Inbound Streamable HTTP is enabled only with CLI arguments, not with `config.json`, so stdio-based agents can safely share the same service-pool config without accidentally starting an HTTP listener.
 
 A service is loaded only when `enable` is missing or set to `true`. If `enable` is set to `false`, the gateway skips that service entirely. During hot reload, disabling or removing a service also stops its existing downstream process if one is running.
 
@@ -144,6 +156,9 @@ A service is loaded only when `enable` is missing or set to `true`. If `enable` 
 - `cwd` is optional. When omitted, the gateway uses its current working directory.
 - `env` is optional.
 - `framing` is optional. When omitted, the gateway tries `line` first and then `content-length`.
+- HTTP downstream transports use `transport.type: "http"` and a single `transport.url`.
+- `transport.headers` can provide static headers for an HTTP downstream service.
+- `transport.enableJsonResponse` enables stateless JSON response mode for an HTTP downstream service.
 
 ### Config shape
 
@@ -167,10 +182,34 @@ A service is loaded only when `enable` is missing or set to `true`. If `enable` 
           "examples/echo-service.ts"
         ]
       }
+    },
+    {
+      "serviceId": "remote-http",
+      "enable": false,
+      "name": "Remote Streamable HTTP Service",
+      "description": "Example downstream MCP service over Streamable HTTP.",
+      "transport": {
+        "type": "http",
+        "url": "http://127.0.0.1:3200/mcp",
+        "headers": {
+          "Authorization": "Bearer replace-me"
+        },
+        "enableJsonResponse": false
+      }
     }
   ]
 }
 ```
+
+### Streamable HTTP notes
+
+- The gateway uses one endpoint for both `GET` and `POST`.
+- Inbound HTTP is enabled only by the explicit `--http` CLI option, optionally with settings such as `--port 3100 --path /mcp`.
+- Passing `--port`, `--host`, `--path`, or `--json-response` without `--http` does not start an HTTP listener.
+- `GET /mcp` opens the SSE read channel and returns the session in the `Mcp-Session-Id` header.
+- `POST /mcp` sends JSON-RPC messages. The preferred session binding is the `Mcp-Session-Id` header.
+- Query-string `sessionId` is accepted for compatibility, but new clients should use the header.
+- The `endpoint` SSE event advertises the single path, such as `/mcp`, without embedding the session id in the URL.
 
 ## Public Gateway Tools
 
