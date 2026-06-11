@@ -34,7 +34,9 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 
 ## Strict Argument Rule
 
+- Treat every `serviceId` argument accepted by `gateway.*` tools as a downstream service identifier returned by `gateway.listServices`. Never pass `gateway`, a gateway-owned tool name, or any inferred self-reference as `serviceId`.
 - If a tool has any non-trivial arguments, optional flags, confirmation fields, enum values, or write-safety fields, call `gateway.getToolSchema` before execution unless the exact argument contract is already confirmed in the current session.
+- Apply gateway discovery, schema, management, and routing tools only to downstream services and downstream tools. Do not use them to inspect or call gateway-owned tools such as `gateway.listTools` or `gateway.callTool`; gateway-owned tool schemas come from the MCP client's current gateway tool definitions.
 - Do not rely on tool descriptions alone when the argument shape could affect correctness or safety.
 - This is especially important for write tools, confirmation-based tools, and tools with nested argument objects.
 
