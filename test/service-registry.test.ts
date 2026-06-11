@@ -37,6 +37,9 @@ test("ServiceRegistry loads metadata and routes downstream tool calls", async ()
   const services = registry.listServices();
   assert.equal(services.length, 1);
   assert.equal(services[0]?.metadata.tools[0]?.name, "echo");
+  assert.deepEqual(registry.listTools("demo-echo", "ECHO").map((tool) => tool.name), ["echo"]);
+  assert.deepEqual(registry.listTools("demo-echo", ["missing", "ECHO"]).map((tool) => tool.name), ["echo"]);
+  assert.deepEqual(registry.listTools("demo-echo", "missing"), []);
 
   const call = await registry.callTool("demo-echo", "echo", { message: "hello" });
   assert.equal(call.restartAttempts, 0);

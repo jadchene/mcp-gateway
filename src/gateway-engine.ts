@@ -144,8 +144,9 @@ export class McpGatewayEngine {
    */
   public listTools(args: JsonObject): unknown {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
+    const toolName = optionalStringArray(args.toolName, "The 'toolName' argument must be a string or string array when provided.");
     return successContent({
-      tools: this.registry.listTools(serviceId).map((tool) => ({
+      tools: this.registry.listTools(serviceId, toolName).map((tool) => ({
         name: tool.name,
         description: tool.description ?? null
       }))
@@ -238,9 +239,21 @@ export function buildGatewayTools(): JsonObject[] {
     },
     {
       name: "gateway.listTools",
-      description: "Lists all tools exposed by one downstream service.",
+      description: "Lists tools exposed by one downstream service, optionally filtered by one or more tool name keywords.",
       inputSchema: objectSchema(["serviceId"], {
-        serviceId: stringSchema("Logical service identifier.")
+        serviceId: stringSchema("Logical service identifier."),
+        toolName: {
+          anyOf: [
+            stringSchema("Optional keyword matched against downstream tool names."),
+            {
+              type: "array",
+              description: "Optional keywords matched against downstream tool names. A tool is returned when any keyword matches.",
+              items: {
+                type: "string"
+              }
+            }
+          ]
+        }
       })
     },
     {
@@ -344,6 +357,27 @@ function requireString(input: unknown, message: string): string {
     throw new Error(message);
   }
   return input;
+}
+
+/**
+ * Returns optional string keywords, treating blank strings as absent.
+ */
+function optionalStringArray(input: unknown, message: string): string | string[] | undefined {
+  if (input === undefined || input === null) {
+    return undefined;
+  }
+
+  if (typeof input !== "string") {
+    if (!Array.isArray(input) || input.some((value) => typeof value !== "string")) {
+      throw new Error(message);
+    }
+
+    const values = input.map((value) => value.trim()).filter((value) => value !== "");
+    return values.length === 0 ? undefined : values;
+  }
+
+  const trimmed = input.trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 /**

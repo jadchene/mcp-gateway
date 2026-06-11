@@ -227,7 +227,7 @@ mcp-gateway-service -v
 ### 返回结构约定
 
 - `gateway.listServices` 只返回 `serviceId`、`description`、`available`
-- `gateway.listTools` 只返回 `name`、`description`
+- `gateway.listTools` 只返回 `name`、`description`，可传可选参数 `toolName`，支持字符串或字符串数组，按名称片段筛选
 - `gateway.getToolSchema` 只返回 `inputSchema`、`outputSchema`
 - `gateway.manageService` 只返回 `serviceId`、`action`、`enabled`、`available`
 - `gateway.callTool` 直接返回下游 MCP 的结果，不再额外包一层网关元数据
@@ -263,7 +263,7 @@ mcp-gateway-service -v
 为了尽量节省 token，推荐由客户端缓存发现结果，而不是每次都重新调用网关：
 
 1. 会话开始时调用一次 `gateway.listServices`
-2. 真正需要某个服务时，再调用 `gateway.listTools(serviceId)`
+2. 真正需要某个服务时，再调用 `gateway.listTools(serviceId)`，工具很多时可传 `toolName` 用一个或多个关键词缩小结果范围
 3. 第一次调用某个工具前，再调用 `gateway.getToolSchema(serviceId, toolName)`
 4. 执行时调用 `gateway.callTool(...)`
 5. 只有在明确需要诊断时才调用 `gateway.getService`

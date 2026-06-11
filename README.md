@@ -225,7 +225,7 @@ The gateway exposes a fixed set of discovery and routing tools:
 ### Response design
 
 - `gateway.listServices` returns only `serviceId`, `description`, and `available`.
-- `gateway.listTools` returns only `name` and `description`.
+- `gateway.listTools` returns only `name` and `description`; pass optional `toolName` as a string or string array to filter names by substring.
 - `gateway.getToolSchema` returns only `inputSchema` and `outputSchema`.
 - `gateway.manageService` returns only `serviceId`, `action`, `enabled`, and `available`.
 - `gateway.callTool` forwards the downstream MCP tool result directly without extra gateway metadata wrapping.
@@ -261,7 +261,7 @@ Important notes:
 For the best token efficiency, the MCP client should cache discovery results instead of repeatedly querying the gateway:
 
 1. Call `gateway.listServices` once at session start.
-2. Call `gateway.listTools(serviceId)` only when a service is actually needed.
+2. Call `gateway.listTools(serviceId)` only when a service is actually needed, optionally with `toolName` to narrow large tool lists by one or more keywords.
 3. Call `gateway.getToolSchema(serviceId, toolName)` only before the first use of that tool.
 4. Call `gateway.callTool(...)` for execution.
 5. Use `gateway.getService` only when diagnostics are explicitly needed.

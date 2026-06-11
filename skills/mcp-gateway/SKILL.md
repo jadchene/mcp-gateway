@@ -18,7 +18,7 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 ## Required Workflow
 
 1. Call `gateway.listServices` once to find the right downstream service.
-2. Call `gateway.listTools(serviceId)` only for the selected service.
+2. Call `gateway.listTools(serviceId)` only for the selected service, using optional `toolName` as a string or string array when one or more keywords can narrow a large tool list.
 3. Call `gateway.getToolSchema(serviceId, toolName)` before the first use of that tool, or any time the arguments are not fully certain.
 4. Call `gateway.callTool(serviceId, toolName, arguments)` for execution.
 5. Re-discover only when a call fails, service availability changes, or the task clearly requires fresh metadata.
@@ -41,7 +41,7 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 ## Response Shape Expectations
 
 - `gateway.listServices` returns compact service entries with `serviceId`, `description`, and `available`.
-- `gateway.listTools` returns compact tool entries with `name` and `description`.
+- `gateway.listTools` returns compact tool entries with `name` and `description`, and supports optional substring filtering by `toolName` as a string or string array.
 - `gateway.getToolSchema` returns only `inputSchema` and `outputSchema`.
 - `gateway.callTool` forwards the downstream MCP result directly with minimal or no gateway wrapping.
 
@@ -57,7 +57,8 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 - Need a service for one task domain:
   - `gateway.listServices`
   - choose the most relevant `serviceId`
-  - `gateway.listTools({ serviceId: "selected-service" })`
+  - `gateway.listTools({ serviceId: "selected-service", toolName: "optional-keyword" })`
+  - `gateway.listTools({ serviceId: "selected-service", toolName: ["keyword-a", "keyword-b"] })`
   - `gateway.getToolSchema({ serviceId: "selected-service", toolName: "selected-tool" })`
   - `gateway.callTool({ serviceId: "selected-service", toolName: "selected-tool", arguments: {...} })`
 

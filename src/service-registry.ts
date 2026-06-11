@@ -134,10 +134,19 @@ export class ServiceRegistry {
   }
 
   /**
-   * Lists tools for one logical service.
+   * Lists tools for one logical service, optionally filtering by one or more tool name keywords.
    */
-  public listTools(serviceId: string): ToolDefinition[] {
-    return this.requireService(serviceId).metadata.tools;
+  public listTools(serviceId: string, toolName?: string | string[]): ToolDefinition[] {
+    const tools = this.requireService(serviceId).metadata.tools;
+    const keywords = normalizeToolNameKeywords(toolName);
+    if (keywords.length === 0) {
+      return tools;
+    }
+
+    return tools.filter((tool) => {
+      const normalizedName = tool.name.toLowerCase();
+      return keywords.some((keyword) => normalizedName.includes(keyword));
+    });
   }
 
   /**
@@ -447,6 +456,20 @@ function createClient(service: ServiceConfig, logger: Logger): McpClient {
     default:
       throw new Error(`Unsupported transport '${String((service.transport as { type?: unknown }).type)}'.`);
   }
+}
+
+/**
+ * Normalizes optional tool name keywords for case-insensitive filtering.
+ */
+function normalizeToolNameKeywords(toolName: string | string[] | undefined): string[] {
+  if (!toolName) {
+    return [];
+  }
+
+  const values = Array.isArray(toolName) ? toolName : [toolName];
+  return values
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value !== "");
 }
 
 /**

@@ -62,6 +62,94 @@ test("McpGatewayEngine returns a minimal service list payload", () => {
   });
 });
 
+test("McpGatewayEngine filters listed tools by tool name keyword", () => {
+  const registry = createRegistryStub({
+    tools: [
+      {
+        name: "database_list_tables",
+        description: "List database tables",
+        inputSchema: null,
+        outputSchema: null
+      },
+      {
+        name: "database_describe_table",
+        description: "Describe one table",
+        inputSchema: null,
+        outputSchema: null
+      },
+      {
+        name: "gitea_search_issues",
+        description: "Search issues",
+        inputSchema: null,
+        outputSchema: null
+      }
+    ]
+  });
+  const engine = createGatewayEngineForTest(registry);
+
+  const result = engine.listTools({
+    serviceId: "playwright",
+    toolName: "table"
+  }) as { structuredContent?: { tools?: Array<Record<string, unknown>> } };
+
+  assert.deepEqual(result.structuredContent, {
+    tools: [
+      {
+        name: "database_list_tables",
+        description: "List database tables"
+      },
+      {
+        name: "database_describe_table",
+        description: "Describe one table"
+      }
+    ]
+  });
+});
+
+test("McpGatewayEngine filters listed tools by multiple tool name keywords", () => {
+  const registry = createRegistryStub({
+    tools: [
+      {
+        name: "database_list_tables",
+        description: "List database tables",
+        inputSchema: null,
+        outputSchema: null
+      },
+      {
+        name: "database_describe_table",
+        description: "Describe one table",
+        inputSchema: null,
+        outputSchema: null
+      },
+      {
+        name: "gitea_search_issues",
+        description: "Search issues",
+        inputSchema: null,
+        outputSchema: null
+      }
+    ]
+  });
+  const engine = createGatewayEngineForTest(registry);
+
+  const result = engine.listTools({
+    serviceId: "playwright",
+    toolName: ["describe", "issues"]
+  }) as { structuredContent?: { tools?: Array<Record<string, unknown>> } };
+
+  assert.deepEqual(result.structuredContent, {
+    tools: [
+      {
+        name: "database_describe_table",
+        description: "Describe one table"
+      },
+      {
+        name: "gitea_search_issues",
+        description: "Search issues"
+      }
+    ]
+  });
+});
+
 test("McpGatewayEngine forwards downstream tool results without extra gateway wrapping", async () => {
   const downstreamResult = {
     content: [
@@ -186,7 +274,7 @@ function createRegistryStub(overrides: {
 }): {
   listServices: () => ServiceRuntimeSnapshot[];
   getService: (serviceId: string) => ServiceRuntimeSnapshot | null;
-  listTools: (serviceId: string) => ToolDefinition[];
+  listTools: (serviceId: string, toolName?: string | string[]) => ToolDefinition[];
   getTool: (serviceId: string, toolName: string) => ToolDefinition | null;
   callTool: (serviceId: string, toolName: string, args: Record<string, unknown>) => Promise<{
     result: unknown;
@@ -227,7 +315,24 @@ function createRegistryStub(overrides: {
   return {
     listServices: () => [snapshot],
     getService: (serviceId: string) => serviceId === snapshot.config.serviceId ? snapshot : null,
-    listTools: (serviceId: string) => serviceId === snapshot.config.serviceId ? snapshot.metadata.tools : [],
+    listTools: (serviceId: string, toolName?: string | string[]) => {
+      if (serviceId !== snapshot.config.serviceId) {
+        return [];
+      }
+
+      const keywords = (Array.isArray(toolName) ? toolName : [toolName])
+        .filter((value): value is string => typeof value === "string" && value.trim() !== "")
+        .map((value) => value.toLowerCase());
+
+      if (keywords.length === 0) {
+        return snapshot.metadata.tools;
+      }
+
+      return snapshot.metadata.tools.filter((tool) => {
+        const normalizedName = tool.name.toLowerCase();
+        return keywords.some((keyword) => normalizedName.includes(keyword));
+      });
+    },
     getTool: (serviceId: string, toolName: string) => (
       serviceId === snapshot.config.serviceId
         ? snapshot.metadata.tools.find((tool) => tool.name === toolName) ?? null
