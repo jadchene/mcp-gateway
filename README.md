@@ -215,30 +215,30 @@ A service is loaded only when `enable` is missing or set to `true`. If `enable` 
 
 The gateway exposes a fixed set of discovery and routing tools:
 
-- `gateway.listServices`
-- `gateway.getService`
-- `gateway.listTools`
-- `gateway.getToolSchema`
-- `gateway.manageService`
-- `gateway.callTool`
+- `gateway_list_services`
+- `gateway_get_service`
+- `gateway_list_tools`
+- `gateway_get_tool_schema`
+- `gateway_manage_service`
+- `gateway_call_tool`
 
 ### Response design
 
-- `gateway.listServices` returns only `serviceId`, `description`, and `available`.
-- `gateway.listTools` returns only `name` and `description`; pass optional `toolName` as a string or string array to filter names by substring.
-- `gateway.getToolSchema` returns only `inputSchema` and `outputSchema`.
-- `gateway.manageService` returns only `serviceId`, `action`, `enabled`, and `available`.
-- `gateway.callTool` forwards the downstream MCP tool result directly without extra gateway metadata wrapping.
+- `gateway_list_services` returns only `serviceId`, `description`, and `available`.
+- `gateway_list_tools` returns only `name` and `description`; pass optional `toolName` as a string or string array to filter names by substring.
+- `gateway_get_tool_schema` returns only `inputSchema` and `outputSchema`.
+- `gateway_manage_service` returns only `serviceId`, `action`, `enabled`, and `available`.
+- `gateway_call_tool` forwards the downstream MCP tool result directly without extra gateway metadata wrapping.
 
 ### Default workflow vs diagnostics
 
-- The default token-efficient workflow still uses four tools: `gateway.listServices`, `gateway.listTools`, `gateway.getToolSchema`, and `gateway.callTool`.
-- `gateway.getService` is primarily for diagnostics, such as checking recent service errors, connection state, protocol version, or downstream server info.
-- `gateway.manageService` is an operational tool for explicit service control, not part of the normal discovery flow.
+- The default token-efficient workflow still uses four tools: `gateway_list_services`, `gateway_list_tools`, `gateway_get_tool_schema`, and `gateway_call_tool`.
+- `gateway_get_service` is primarily for diagnostics, such as checking recent service errors, connection state, protocol version, or downstream server info.
+- `gateway_manage_service` is an operational tool for explicit service control, not part of the normal discovery flow.
 
-### `gateway.manageService`
+### `gateway_manage_service`
 
-Use `gateway.manageService` when you explicitly need to reconnect a service or persistently change its enabled state.
+Use `gateway_manage_service` when you explicitly need to reconnect a service or persistently change its enabled state.
 
 Input:
 
@@ -260,12 +260,12 @@ Important notes:
 
 For the best token efficiency, the MCP client should cache discovery results instead of repeatedly querying the gateway:
 
-1. Call `gateway.listServices` once at session start.
-2. Call `gateway.listTools(serviceId)` only when a service is actually needed, optionally with `toolName` to narrow large tool lists by one or more keywords.
-3. Call `gateway.getToolSchema(serviceId, toolName)` only before the first use of that tool.
-4. Call `gateway.callTool(...)` for execution.
-5. Use `gateway.getService` only when diagnostics are explicitly needed.
-6. Use `gateway.manageService` only when a service must be reconnected or explicitly enabled/disabled.
+1. Call `gateway_list_services` once at session start.
+2. Call `gateway_list_tools(serviceId)` only when a service is actually needed, optionally with `toolName` to narrow large tool lists by one or more keywords.
+3. Call `gateway_get_tool_schema(serviceId, toolName)` only before the first use of that tool.
+4. Call `gateway_call_tool(...)` for execution.
+5. Use `gateway_get_service` only when diagnostics are explicitly needed.
+6. Use `gateway_manage_service` only when a service must be reconnected or explicitly enabled/disabled.
 7. Refresh discovery data only when a call fails, the config changes, or the client explicitly wants a refresh.
 
 ## Skill Integration (Recommended)

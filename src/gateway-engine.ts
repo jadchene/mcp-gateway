@@ -98,19 +98,19 @@ export class McpGatewayEngine {
     const args = toObject(params.arguments ?? {}, "The tool arguments must be an object.");
 
     switch (toolName) {
-      case "gateway.listServices":
+      case "gateway_list_services":
         return successContent({
           services: this.registry.listServices().map(formatServiceSummary)
         });
-      case "gateway.getService":
+      case "gateway_get_service":
         return this.getService(args);
-      case "gateway.listTools":
+      case "gateway_list_tools":
         return this.listTools(args);
-      case "gateway.getToolSchema":
+      case "gateway_get_tool_schema":
         return this.getToolSchema(args);
-      case "gateway.manageService":
+      case "gateway_manage_service":
         return this.manageService(args);
-      case "gateway.callTool":
+      case "gateway_call_tool":
         return this.callDownstreamTool(args);
       default:
         throw new Error(`Unknown gateway tool '${toolName}'.`);
@@ -222,7 +222,7 @@ export class McpGatewayEngine {
 export function buildGatewayTools(): JsonObject[] {
   return [
     {
-      name: "gateway.listServices",
+      name: "gateway_list_services",
       description: "Lists all MCP services currently managed by the gateway.",
       inputSchema: {
         type: "object",
@@ -231,14 +231,14 @@ export function buildGatewayTools(): JsonObject[] {
       }
     },
     {
-      name: "gateway.getService",
+      name: "gateway_get_service",
       description: "Returns one service summary, runtime state, and metadata cache details.",
       inputSchema: objectSchema(["serviceId"], {
         serviceId: stringSchema("Logical service identifier.")
       })
     },
     {
-      name: "gateway.listTools",
+      name: "gateway_list_tools",
       description: "Lists tools exposed by one downstream service, optionally filtered by one or more tool name keywords.",
       inputSchema: objectSchema(["serviceId"], {
         serviceId: stringSchema("Logical service identifier."),
@@ -257,7 +257,7 @@ export function buildGatewayTools(): JsonObject[] {
       })
     },
     {
-      name: "gateway.getToolSchema",
+      name: "gateway_get_tool_schema",
       description: "Returns the input and output schema for one downstream tool.",
       inputSchema: objectSchema(["serviceId", "toolName"], {
         serviceId: stringSchema("Logical service identifier."),
@@ -265,7 +265,7 @@ export function buildGatewayTools(): JsonObject[] {
       })
     },
     {
-      name: "gateway.manageService",
+      name: "gateway_manage_service",
       description: "Reconnects one service or updates its enabled state with a compact action.",
       inputSchema: objectSchema(["serviceId", "action"], {
         serviceId: stringSchema("Logical service identifier."),
@@ -277,7 +277,7 @@ export function buildGatewayTools(): JsonObject[] {
       })
     },
     {
-      name: "gateway.callTool",
+      name: "gateway_call_tool",
       description: "Calls one downstream tool through the gateway service pool.",
       inputSchema: objectSchema(["serviceId", "toolName", "arguments"], {
         serviceId: stringSchema("Logical service identifier."),

@@ -17,35 +17,35 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 
 ## Required Workflow
 
-1. Call `gateway.listServices` once to find the right downstream service.
-2. Call `gateway.listTools(serviceId)` only for the selected service, using optional `toolName` as a string or string array when one or more keywords can narrow a large tool list.
-3. Call `gateway.getToolSchema(serviceId, toolName)` before the first use of that tool, or any time the arguments are not fully certain.
-4. Call `gateway.callTool(serviceId, toolName, arguments)` for execution.
+1. Call `gateway_list_services` once to find the right downstream service.
+2. Call `gateway_list_tools(serviceId)` only for the selected service, using optional `toolName` as a string or string array when one or more keywords can narrow a large tool list.
+3. Call `gateway_get_tool_schema(serviceId, toolName)` before the first use of that tool, or any time the arguments are not fully certain.
+4. Call `gateway_call_tool(serviceId, toolName, arguments)` for execution.
 5. Re-discover only when a call fails, service availability changes, or the task clearly requires fresh metadata.
 
 ## Diagnostic Exception
 
-- Treat `gateway.getService` as a diagnostic tool, not part of the default workflow.
+- Treat `gateway_get_service` as a diagnostic tool, not part of the default workflow.
 - Use it only when the user explicitly asks to inspect service health, connection state, protocol details, or recent service errors.
 - Do not call it during normal task execution when the four-tool flow is sufficient.
-- Treat `gateway.manageService` as an explicit service-control tool, not part of the default workflow.
-- Use `gateway.manageService({ serviceId, action: "reconnect" })` only when the user explicitly wants to retry starting a failed service after its dependency becomes ready.
-- Use `gateway.manageService({ serviceId, action: "enable" | "disable" })` only when the user explicitly wants to persistently change that service's enabled state in the config file.
+- Treat `gateway_manage_service` as an explicit service-control tool, not part of the default workflow.
+- Use `gateway_manage_service({ serviceId, action: "reconnect" })` only when the user explicitly wants to retry starting a failed service after its dependency becomes ready.
+- Use `gateway_manage_service({ serviceId, action: "enable" | "disable" })` only when the user explicitly wants to persistently change that service's enabled state in the config file.
 
 ## Strict Argument Rule
 
-- Treat every `serviceId` argument accepted by `gateway.*` tools as a downstream service identifier returned by `gateway.listServices`. Never pass `gateway`, a gateway-owned tool name, or any inferred self-reference as `serviceId`.
-- If a tool has any non-trivial arguments, optional flags, confirmation fields, enum values, or write-safety fields, call `gateway.getToolSchema` before execution unless the exact argument contract is already confirmed in the current session.
-- Apply gateway discovery, schema, management, and routing tools only to downstream services and downstream tools. Do not use them to inspect or call gateway-owned tools such as `gateway.listTools` or `gateway.callTool`; gateway-owned tool schemas come from the MCP client's current gateway tool definitions.
+- Treat every `serviceId` argument accepted by `gateway_*` tools as a downstream service identifier returned by `gateway_list_services`. Never pass `gateway`, a gateway-owned tool name, or any inferred self-reference as `serviceId`.
+- If a tool has any non-trivial arguments, optional flags, confirmation fields, enum values, or write-safety fields, call `gateway_get_tool_schema` before execution unless the exact argument contract is already confirmed in the current session.
+- Apply gateway discovery, schema, management, and routing tools only to downstream services and downstream tools. Do not use them to inspect or call gateway-owned tools such as `gateway_list_tools` or `gateway_call_tool`; gateway-owned tool schemas come from the MCP client's current gateway tool definitions.
 - Do not rely on tool descriptions alone when the argument shape could affect correctness or safety.
 - This is especially important for write tools, confirmation-based tools, and tools with nested argument objects.
 
 ## Response Shape Expectations
 
-- `gateway.listServices` returns compact service entries with `serviceId`, `description`, and `available`.
-- `gateway.listTools` returns compact tool entries with `name` and `description`, and supports optional substring filtering by `toolName` as a string or string array.
-- `gateway.getToolSchema` returns only `inputSchema` and `outputSchema`.
-- `gateway.callTool` forwards the downstream MCP result directly with minimal or no gateway wrapping.
+- `gateway_list_services` returns compact service entries with `serviceId`, `description`, and `available`.
+- `gateway_list_tools` returns compact tool entries with `name` and `description`, and supports optional substring filtering by `toolName` as a string or string array.
+- `gateway_get_tool_schema` returns only `inputSchema` and `outputSchema`.
+- `gateway_call_tool` forwards the downstream MCP result directly with minimal or no gateway wrapping.
 
 ## Token-Efficient Strategy
 
@@ -57,15 +57,15 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 ## Common Patterns
 
 - Need a service for one task domain:
-  - `gateway.listServices`
+  - `gateway_list_services`
   - choose the most relevant `serviceId`
-  - `gateway.listTools({ serviceId: "selected-service", toolName: "optional-keyword" })`
-  - `gateway.listTools({ serviceId: "selected-service", toolName: ["keyword-a", "keyword-b"] })`
-  - `gateway.getToolSchema({ serviceId: "selected-service", toolName: "selected-tool" })`
-  - `gateway.callTool({ serviceId: "selected-service", toolName: "selected-tool", arguments: {...} })`
+  - `gateway_list_tools({ serviceId: "selected-service", toolName: "optional-keyword" })`
+  - `gateway_list_tools({ serviceId: "selected-service", toolName: ["keyword-a", "keyword-b"] })`
+  - `gateway_get_tool_schema({ serviceId: "selected-service", toolName: "selected-tool" })`
+  - `gateway_call_tool({ serviceId: "selected-service", toolName: "selected-tool", arguments: {...} })`
 
 - Need to inspect an unfamiliar tool before first use, or any tool whose arguments are not fully certain:
-  - `gateway.getToolSchema({ serviceId: "selected-service", toolName: "selected-tool" })`
+  - `gateway_get_tool_schema({ serviceId: "selected-service", toolName: "selected-tool" })`
   - build arguments strictly from `inputSchema`
   - call the tool only after the schema is understood
 
@@ -73,7 +73,7 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 
 - **Never** flatten all downstream tools into your own notes unless the task explicitly needs a full inventory.
 - **Never** invent arguments for a tool when the schema can be queried cheaply.
-- **Never** skip `gateway.getToolSchema` when argument names or fields are unclear.
+- **Never** skip `gateway_get_tool_schema` when argument names or fields are unclear.
 - **Never** assume a service is available without checking recent gateway discovery results when availability matters.
 
 ## Practical Guidance

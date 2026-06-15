@@ -51,7 +51,7 @@ test("StreamableHttpGatewayServer uses Mcp-Session-Id header and sends responses
     assert.equal(post.status, 202);
 
     const messageEvent = await readUntil(reader, "event: message");
-    assert.match(messageEvent, /gateway\.listServices/);
+    assert.match(messageEvent, /gateway_list_services/);
     await reader.cancel();
   } finally {
     await server.stop();

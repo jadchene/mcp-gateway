@@ -75,7 +75,7 @@
 ### 稳定的网关接口
 - 不动态展开所有下游工具。
 - 服务列表和工具列表返回精简结构。
-- `gateway.callTool` 直接透传下游工具返回结果，减少额外包装。
+- `gateway_call_tool` 直接透传下游工具返回结果，减少额外包装。
 
 ### 实用运维能力
 - 从 JSON 配置文件加载静态服务池。
@@ -217,30 +217,30 @@ mcp-gateway-service -v
 
 ## 对外网关工具
 
-- `gateway.listServices`
-- `gateway.getService`
-- `gateway.listTools`
-- `gateway.getToolSchema`
-- `gateway.manageService`
-- `gateway.callTool`
+- `gateway_list_services`
+- `gateway_get_service`
+- `gateway_list_tools`
+- `gateway_get_tool_schema`
+- `gateway_manage_service`
+- `gateway_call_tool`
 
 ### 返回结构约定
 
-- `gateway.listServices` 只返回 `serviceId`、`description`、`available`
-- `gateway.listTools` 只返回 `name`、`description`，可传可选参数 `toolName`，支持字符串或字符串数组，按名称片段筛选
-- `gateway.getToolSchema` 只返回 `inputSchema`、`outputSchema`
-- `gateway.manageService` 只返回 `serviceId`、`action`、`enabled`、`available`
-- `gateway.callTool` 直接返回下游 MCP 的结果，不再额外包一层网关元数据
+- `gateway_list_services` 只返回 `serviceId`、`description`、`available`
+- `gateway_list_tools` 只返回 `name`、`description`，可传可选参数 `toolName`，支持字符串或字符串数组，按名称片段筛选
+- `gateway_get_tool_schema` 只返回 `inputSchema`、`outputSchema`
+- `gateway_manage_service` 只返回 `serviceId`、`action`、`enabled`、`available`
+- `gateway_call_tool` 直接返回下游 MCP 的结果，不再额外包一层网关元数据
 
 ### 默认流程与诊断的区别
 
-- 默认的节省 token 工作流仍然只依赖 4 个工具：`gateway.listServices`、`gateway.listTools`、`gateway.getToolSchema`、`gateway.callTool`
-- `gateway.getService` 主要用于诊断，例如查看最近错误、连接状态、协议版本、下游服务信息
-- `gateway.manageService` 是显式运维控制工具，不属于日常 discovery 流程
+- 默认的节省 token 工作流仍然只依赖 4 个工具：`gateway_list_services`、`gateway_list_tools`、`gateway_get_tool_schema`、`gateway_call_tool`
+- `gateway_get_service` 主要用于诊断，例如查看最近错误、连接状态、协议版本、下游服务信息
+- `gateway_manage_service` 是显式运维控制工具，不属于日常 discovery 流程
 
-### `gateway.manageService`
+### `gateway_manage_service`
 
-当你明确需要重新拉起某个服务，或者持久化修改某个服务的启用状态时，使用 `gateway.manageService`。
+当你明确需要重新拉起某个服务，或者持久化修改某个服务的启用状态时，使用 `gateway_manage_service`。
 
 输入参数：
 
@@ -262,12 +262,12 @@ mcp-gateway-service -v
 
 为了尽量节省 token，推荐由客户端缓存发现结果，而不是每次都重新调用网关：
 
-1. 会话开始时调用一次 `gateway.listServices`
-2. 真正需要某个服务时，再调用 `gateway.listTools(serviceId)`，工具很多时可传 `toolName` 用一个或多个关键词缩小结果范围
-3. 第一次调用某个工具前，再调用 `gateway.getToolSchema(serviceId, toolName)`
-4. 执行时调用 `gateway.callTool(...)`
-5. 只有在明确需要诊断时才调用 `gateway.getService`
-6. 只有在需要重新拉起服务或显式启用/停用服务时才调用 `gateway.manageService`
+1. 会话开始时调用一次 `gateway_list_services`
+2. 真正需要某个服务时，再调用 `gateway_list_tools(serviceId)`，工具很多时可传 `toolName` 用一个或多个关键词缩小结果范围
+3. 第一次调用某个工具前，再调用 `gateway_get_tool_schema(serviceId, toolName)`
+4. 执行时调用 `gateway_call_tool(...)`
+5. 只有在明确需要诊断时才调用 `gateway_get_service`
+6. 只有在需要重新拉起服务或显式启用/停用服务时才调用 `gateway_manage_service`
 7. 只有在调用失败、配置变更、或明确需要刷新时才重新发现
 
 ## Skill 集成（推荐）

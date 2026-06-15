@@ -44,7 +44,7 @@ test("McpGatewayEngine returns a minimal service list payload", () => {
     id: 1,
     method: "tools/call",
     params: {
-      name: "gateway.listServices",
+      name: "gateway_list_services",
       arguments: {}
     }
   }) as Promise<{ structuredContent?: { services?: Array<Record<string, unknown>> } }>;
@@ -211,7 +211,7 @@ test("McpGatewayEngine waits for the startup barrier before handling tool calls"
     id: 1,
     method: "tools/call",
     params: {
-      name: "gateway.callTool",
+      name: "gateway_call_tool",
       arguments: {
         serviceId: "demo",
         toolName: "echo",
