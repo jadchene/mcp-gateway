@@ -2,169 +2,85 @@
 
 # MCP Gateway
 
-这个项目提供了一个轻量的 MCP 网关，用于实现**按需发现、节省 token**，并为多个下游 MCP 服务提供**统一接入入口**。
+MCP Gateway 是一个轻量级 Model Context Protocol 网关，用一个小型 MCP 入口管理多个下游 MCP 服务。
 
-它不会在会话开始时把所有下游 MCP 工具一次性暴露给 AI，而是保持一个固定且很小的网关工具集合，让客户端按需：
+它不会在客户端启动时把所有下游工具直接展开，而是提供固定的发现和转发 API。Agent 可以先列出服务，再查看某个服务的工具，按需获取单个工具 schema，最后转发真实工具调用。
 
-- 先发现可用服务
-- 再查看某个服务的工具列表
-- 再查询某个工具的 schema
-- 最后转发真实工具调用
+## 功能
 
-## 为什么要用这个网关
+- 用一个 MCP 入口接入多个下游 MCP 服务。
+- 通过固定的小型网关工具面实现按需发现，减少初始 token 消耗。
+- 支持 stdio 和 Streamable HTTP 下游传输。
+- 可通过 CLI 参数启用入站 Streamable HTTP。
+- 支持服务池配置热刷新。
+- 热刷新时会停止已删除、已禁用或配置被替换的下游服务。
+- 下游进程失败后最多自动重启 3 次，然后标记为不可用。
+- 配置刷新是原子的，新配置无效时保留上一份有效配置。
+- 支持可选的换行 JSON 文件日志，不把运行日志写入 MCP stdout。
+- 支持通过 `--version` 或 `-v` 查看版本。
 
-这个网关主要解决的是一个很实际的问题：  
-当你有多个 MCP 服务、多个 Agent 时，直接让每个 Agent 去分别配置所有 MCP，成本会越来越高。
+## 为什么使用它
 
-通常会出现两个核心问题：
-
-1. 工具太多，token 消耗太高
-2. MCP 配置重复，维护成本太高
-
-### 1. 降低 token 消耗
-
-很多 MCP 服务本身会暴露几十甚至上百个工具。
-
-如果一个 Agent 直接连接多个 MCP，客户端通常需要在会话开始时就把大量 tool 信息暴露给模型，这会带来：
-
-- prompt 变长
-- 工具发现成本变高
-- schema 和工具描述反复进入上下文
-
-这个网关的做法不是把所有下游工具都直接展开，而是只暴露一个很小的固定发现接口。
-
-正常调用流程变成：
-
-1. 先查看有哪些服务
-2. 再查看某个服务下有哪些工具
-3. 再查看某个工具的 schema
-4. 最后真正调用这个工具
-
-这样模型只会在需要时看到最少量的 MCP 元数据，更适合“按需发现”的使用方式。
-
-### 2. 给多个 Agent 提供统一的 MCP 接入入口
-
-如果没有网关，每个 Agent 往往都要分别配置多个下游 MCP 服务。
-
-这种方式很快会带来维护问题：
-
-- 下游服务一变，每个 Agent 配置都要改
-- 命令路径、环境变量、工作目录会重复出现
-- 密钥和本地路径分散在多个客户端配置里
-- 不同 Agent 的配置很容易逐渐不一致
-
-用了这个网关之后，下游 MCP 服务池只需要在网关配置里维护一次，多个 Agent 只需要连接这一个网关即可。
-
-这样带来的好处是：
-
-- 多个 MCP 统一成一个入口
-- 下游服务的增删改集中在一个地方处理
-- 更容易控制哪些服务对 Agent 可见
-- 减少本地重复配置
-- 更方便在 Codex、Claude Code、Gemini CLI 等不同客户端之间复用
-
-简单说，这个网关的价值不只是“转发调用”，而是把多个 MCP 统一成一个可管理的服务池，同时把模型看到的工具上下文压缩到最小。
-
-## 核心特点
-
-### 按需发现，节省 Token
-- 对外只暴露少量固定网关工具。
-- 只在真正需要时查询服务工具列表和工具 schema。
-- 避免把数百个下游 tool 在初始化阶段全部发给模型。
-
-### 稳定的网关接口
-- 不动态展开所有下游工具。
-- 服务列表和工具列表返回精简结构。
-- `gateway_call_tool` 直接透传下游工具返回结果，减少额外包装。
-
-### 实用运维能力
-- 从 JSON 配置文件加载静态服务池。
-- 监听配置文件变化并自动热刷新。
-- 热刷新时会停掉已删除、已禁用或已被替换配置对应的下游进程。
-- 下游进程异常时最多自动重启 3 次。
-- 配置刷新失败时保留上一版有效快照。
+- 简化 Agent 侧 MCP 配置：每个 Agent 只连接网关，下游服务统一在一个配置文件中管理。
+- 减少初始工具上下文：Agent 只发现当前任务需要的服务、工具和 schema。
+- 集中管理服务生命周期，避免在多个客户端中重复维护命令路径、环境变量和密钥。
 
 ## 快速开始
 
-### 全局安装
+全局安装：
 
 ```bash
 npm install -g @jadchene/mcp-gateway-service
 ```
 
-启动网关：
+创建本地配置：
 
 ```bash
-mcp-gateway-service
+cp config.example.json config.json
 ```
 
-显式指定配置文件：
+启动 stdio 网关：
 
 ```bash
 mcp-gateway-service --config ./config.json
 ```
 
-通过 CLI 参数同时暴露 Streamable HTTP 接口：
+启动入站 Streamable HTTP：
 
 ```bash
-mcp-gateway-service --config ./config.json --http --port 3100 --path /mcp
+mcp-gateway-service --config ./config.json --http --host 127.0.0.1 --port 3100 --path /mcp
 ```
 
-如果 HTTP 客户端希望 `POST` 直接返回 JSON-RPC 响应，可以启用无状态 JSON 直返：
+如果 HTTP 客户端希望 `POST` 直接返回 JSON-RPC 响应，可启用无状态 JSON 直返：
 
 ```bash
-mcp-gateway-service --config ./config.json --http --port 3100 --json-response
+mcp-gateway-service --config ./config.json --http --port 3100 --path /mcp --json-response
 ```
 
-### 从源码运行
-
-先基于 `config.example.json` 自行创建本地 `config.json`，再启动网关：
-
-```bash
-npm install
-npm run dev
-```
-
-默认读取 `./config.json`。
-可以通过 `--config <path>` 为当前进程指定配置文件；如果未传 `--config`，则按 `MCP_GATEWAY_CONFIG`，再回退到 `./config.json`。
-
-也可以通过环境变量指定：
-
-```bash
-$env:MCP_GATEWAY_CONFIG="config/gateway/config.json"
-npm run dev
-```
-
-### 查看版本号
+查看安装版本：
 
 ```bash
 mcp-gateway-service --version
-```
-
-短参数：
-
-```bash
 mcp-gateway-service -v
 ```
 
-## 配置格式
+## 配置
 
-当前支持 `stdio` 和 Streamable HTTP 类型的下游传输。网关自身的入站 Streamable HTTP 只通过 CLI 参数启用，不通过 `config.json` 启用，这样 stdio agent 可以安全共用同一份服务池配置，不会意外启动 HTTP 监听。
+通过 CLI 参数指定配置文件：
 
-只有当 `enable` 未填写或显式为 `true` 时，服务才会被加载；如果 `enable` 为 `false`，网关会跳过该服务。热刷新时，如果某个服务被禁用或从配置中删除，网关也会停掉它当前已启动的下游进程。
+```bash
+mcp-gateway-service --config ./config.json
+```
 
-- `logging.enable` 可选，默认是 `false`
-- 只有当 `logging.enable` 为 `true` 时，`logging.path` 才是必填
-- 启用后，网关会把换行分隔的 JSON 日志写入指定文件，不再把运行日志写到 MCP 的 `stdout` 或 `stderr`
-- 相对 `logging.path` 会按配置文件所在目录解析
-- 日志配置支持热更新，直接修改 `logging.enable` 或 `logging.path` 并保存即可生效，无需重启网关
-- `enable` 可选，不填时默认按启用处理
-- `cwd` 可选，不填时使用当前工作目录
-- `env` 可选
-- `framing` 可选，不填时先尝试 `line`，再尝试 `content-length`
-- HTTP 下游使用 `transport.type: "http"` 和一个 `transport.url`
-- `transport.headers` 可为 HTTP 下游提供静态请求头
-- `transport.enableJsonResponse` 可为 HTTP 下游启用无状态 JSON 直返模式
+或通过环境变量指定：
+
+```bash
+MCP_GATEWAY_CONFIG=./config.json mcp-gateway-service
+```
+
+如果两者都没有提供，服务会尝试读取当前工作目录下的 `config.json`。
+
+配置示例：
 
 ```json
 {
@@ -196,7 +112,7 @@ mcp-gateway-service -v
         "type": "http",
         "url": "http://127.0.0.1:3200/mcp",
         "headers": {
-          "Authorization": "Bearer replace-me"
+          "Authorization": "Bearer ${MCP_TOKEN}"
         },
         "enableJsonResponse": false
       }
@@ -205,90 +121,68 @@ mcp-gateway-service -v
 }
 ```
 
-### Streamable HTTP 说明
+配置说明：
 
-- 网关使用同一个 endpoint 处理 `GET` 和 `POST`
-- 入站 HTTP 只通过显式 `--http` CLI 参数启用，可搭配 `--port 3100 --path /mcp`
-- 只传 `--port`、`--host`、`--path` 或 `--json-response`，但不传 `--http` 时，不会启动 HTTP 监听
-- `GET /mcp` 打开 SSE 下行通道，并通过 `Mcp-Session-Id` 响应头返回 session
-- `POST /mcp` 发送 JSON-RPC 消息，推荐通过 `Mcp-Session-Id` 请求头绑定 session
-- 为兼容旧客户端，仍接受 query string 里的 `sessionId`，但新客户端应优先使用 header
-- `endpoint` SSE 事件只返回统一路径，例如 `/mcp`，不会把 session id 塞进 URL
+- `logging.enable` 默认为 `false`。
+- 只有 `logging.enable` 为 `true` 时，`logging.path` 才必填。
+- 相对 `logging.path` 会按配置文件所在目录解析。
+- 服务 `enable` 默认为 `true`；设为 `false` 时跳过该服务。
+- stdio 服务的 `cwd` 和 `env` 可选。
+- stdio `transport.framing` 可为 `line` 或 `content-length`。不填写时网关先尝试 `line`，再尝试 `content-length`。
+- HTTP 下游服务使用 `transport.type: "http"` 和 `transport.url`。
+- HTTP `transport.headers` 用于提供静态请求头。
+- HTTP `transport.enableJsonResponse` 为该下游服务启用无状态 JSON 直返模式。
 
-## 对外网关工具
+## 入站 Streamable HTTP
 
-- `gateway_list_services`
-- `gateway_get_service`
-- `gateway_list_tools`
-- `gateway_get_tool_schema`
-- `gateway_manage_service`
-- `gateway_call_tool`
+入站 HTTP 只有传入 `--http` 时才会启用。只传 `--host`、`--port`、`--path` 或 `--json-response`，但不传 `--http`，不会启动 HTTP 监听。
 
-### 返回结构约定
+HTTP endpoint 使用同一路径处理 `GET` 和 `POST`：
 
-- `gateway_list_services` 只返回 `serviceId`、`description`、`available`
-- `gateway_list_tools` 只返回 `name`、`description`，可传可选参数 `toolName`，支持字符串或字符串数组，按名称片段筛选
-- `gateway_get_tool_schema` 只返回 `inputSchema`、`outputSchema`
-- `gateway_manage_service` 只返回 `serviceId`、`action`、`enabled`、`available`
-- `gateway_call_tool` 直接返回下游 MCP 的结果，不再额外包一层网关元数据
+- `GET /mcp` 打开 SSE 读取通道，并通过 `Mcp-Session-Id` 响应头返回 session。
+- `POST /mcp` 发送 JSON-RPC 消息。新客户端应通过 `Mcp-Session-Id` 请求头绑定 session。
+- 为兼容旧客户端，仍接受 query string 中的 `sessionId`。
+- `endpoint` SSE 事件只返回统一路径，例如 `/mcp`。
 
-### 默认流程与诊断的区别
+## 网关工具
 
-- 默认的节省 token 工作流仍然只依赖 4 个工具：`gateway_list_services`、`gateway_list_tools`、`gateway_get_tool_schema`、`gateway_call_tool`
-- `gateway_get_service` 主要用于诊断，例如查看最近错误、连接状态、协议版本、下游服务信息
-- `gateway_manage_service` 是显式运维控制工具，不属于日常 discovery 流程
+网关暴露 6 个公开工具：
 
-### `gateway_manage_service`
+| 工具 | 用途 |
+| --- | --- |
+| `gateway_list_services` | 列出网关管理的所有下游 MCP 服务，包括 `serviceId`、描述和可用状态。 |
+| `gateway_get_service` | 返回单个服务的摘要、运行状态、最近错误和缓存元数据。主要用于诊断。 |
+| `gateway_list_tools` | 列出某个下游服务暴露的工具。可用 `toolName` 按一个或多个名称片段过滤。 |
+| `gateway_get_tool_schema` | 返回某个下游工具的输入和输出 schema。 |
+| `gateway_manage_service` | 重连服务，或把启用/禁用状态持久化写入配置文件。 |
+| `gateway_call_tool` | 通过网关调用一个下游工具，并返回下游 MCP 结果。 |
 
-当你明确需要重新拉起某个服务，或者持久化修改某个服务的启用状态时，使用 `gateway_manage_service`。
+默认的节省 token 流程：
 
-输入参数：
+1. 调用一次 `gateway_list_services`。
+2. 真正需要某个服务时，再调用 `gateway_list_tools(serviceId)`。工具很多时可用 `toolName` 按名称过滤。
+3. 第一次使用某个工具前，调用 `gateway_get_tool_schema(serviceId, toolName)`。
+4. 调用 `gateway_call_tool` 执行下游工具。
+5. 只有诊断时才使用 `gateway_get_service`。
+6. 只有需要重连、启用或禁用服务时才使用 `gateway_manage_service`。
 
-- `serviceId`：逻辑服务标识
-- `action`：只能是 `reconnect`、`enable`、`disable`
+`gateway_manage_service` 动作：
 
-动作语义：
+- `reconnect`：不修改配置，只重试当前下游服务生命周期。
+- `enable`：把该服务的 `enable: true` 持久化到配置文件，然后刷新配置。
+- `disable`：把该服务的 `enable: false` 持久化到配置文件，然后刷新配置。
 
-- `reconnect`：立即重新尝试启动并重新初始化指定下游 MCP。适合处理“之前因为依赖没准备好而启动失败”的场景，比如当时 IDE 没开，后来打开后再次尝试拉起 IDE MCP。
-- `enable`：把该服务在配置文件中的 `enable` 写成 `true`，然后触发 reload。
-- `disable`：把该服务在配置文件中的 `enable` 写成 `false`，然后触发 reload。
+## Skill 集成
 
-注意：
+仓库内包含一个公开网关 skill：
 
-- `enable` 和 `disable` 会持久化写入 JSON 配置文件，不是只在当前会话里生效。
-- `reconnect` 不会修改配置文件，只会重新尝试当前服务生命周期。
+- Skill 路径：`skills/mcp-gateway/SKILL.md`
 
-## 推荐调用流程
+当你的 Agent 支持 skills 时建议加载它。它会保持按需发现、节省 token，并通过最小网关契约转发下游调用。
 
-为了尽量节省 token，推荐由客户端缓存发现结果，而不是每次都重新调用网关：
+## MCP 客户端配置
 
-1. 会话开始时调用一次 `gateway_list_services`
-2. 真正需要某个服务时，再调用 `gateway_list_tools(serviceId)`，工具很多时可传 `toolName` 用一个或多个关键词缩小结果范围
-3. 第一次调用某个工具前，再调用 `gateway_get_tool_schema(serviceId, toolName)`
-4. 执行时调用 `gateway_call_tool(...)`
-5. 只有在明确需要诊断时才调用 `gateway_get_service`
-6. 只有在需要重新拉起服务或显式启用/停用服务时才调用 `gateway_manage_service`
-7. 只有在调用失败、配置变更、或明确需要刷新时才重新发现
-
-## Skill 集成（推荐）
-
-仓库内包含一个面向公开使用者的 skill：
-
-- 路径：`skills/mcp-gateway/SKILL.md`
-
-主要用于指导代理：
-
-- 按需发现服务和工具
-- 避免无意义地枚举大量 tool
-- 通过网关的最小接口完成下游调用
-
-## MCP 客户端接入示例
-
-下面示例都使用相对路径，方便迁移。
-
-### Codex
-
-`~/.codex/config.toml`
+Codex：
 
 ```toml
 [mcp_servers.gateway]
@@ -296,9 +190,7 @@ command = "mcp-gateway-service"
 args = ["--config", "./config.json"]
 ```
 
-### Gemini CLI
-
-`~/.gemini/settings.json`
+Gemini CLI：
 
 ```json
 {
@@ -306,18 +198,13 @@ args = ["--config", "./config.json"]
     "gateway": {
       "type": "stdio",
       "command": "mcp-gateway-service",
-      "args": [
-        "--config",
-        "./config.json"
-      ]
+      "args": ["--config", "./config.json"]
     }
   }
 }
 ```
 
-### Claude Code
-
-`~/.claude.json`
+Claude Code：
 
 ```json
 {
@@ -325,25 +212,76 @@ args = ["--config", "./config.json"]
     "gateway": {
       "type": "stdio",
       "command": "mcp-gateway-service",
-      "args": [
-        "--config",
-        "./config.json"
-      ]
+      "args": ["--config", "./config.json"]
     }
   }
 }
 ```
 
-## 开发说明
+Streamable HTTP 模式：
 
-- 仓库只保留 `config.example.json` 作为示例
-- 运行前请自行复制一份本地 `config.json`
-- 真实本地配置和日志建议放在仓库外
-- 默认关闭文件日志，避免 MCP 启动阶段产生额外标准流输出
-- 只有下游服务自己暴露了 `outputSchema` 时，网关才会返回它
-- Windows 下支持解析 PowerShell shim 命令，例如实际落到 `.ps1` 的全局命令
-- 在 Windows 上，网关会优先使用 `pwsh` 解析和执行 `.ps1` shim；如果机器上没有 `pwsh`，会自动回退到 `powershell.exe`
+先启动一个共享 HTTP 网关进程：
+
+```bash
+mcp-gateway-service --config ./config.json --http --host 127.0.0.1 --port 3100 --path /mcp
+```
+
+然后让 MCP 客户端连接这个 HTTP endpoint。
+
+Codex：
+
+```toml
+[mcp_servers.gateway]
+url = "http://127.0.0.1:3100/mcp"
+```
+
+Gemini CLI：
+
+```json
+{
+  "mcpServers": {
+    "gateway": {
+      "httpUrl": "http://127.0.0.1:3100/mcp"
+    }
+  }
+}
+```
+
+Claude Code：
+
+```json
+{
+  "mcpServers": {
+    "gateway": {
+      "type": "http",
+      "url": "http://127.0.0.1:3100/mcp"
+    }
+  }
+}
+```
+
+需要共享同一个网关服务池的客户端都使用同一个 URL。只有当 HTTP 客户端希望 `POST` 直接返回无状态 JSON-RPC 响应时，才需要在启动网关时加 `--json-response`。
+
+## 开发
+
+```bash
+npm install
+npm run dev
+```
+
+构建和测试：
+
+```bash
+npm run build
+npm test
+```
+
+运行构建后的服务：
+
+```bash
+node dist/index.js --config ./config.json
+```
 
 ## License
 
-项目采用 [MIT License](./LICENSE) 开源。
+MIT. See [LICENSE](LICENSE).

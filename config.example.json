@@ -27,7 +27,7 @@
         "type": "http",
         "url": "http://127.0.0.1:3200/mcp",
         "headers": {
-          "Authorization": "Bearer replace-me"
+          "Authorization": "Bearer example-token"
         },
         "enableJsonResponse": false
       }
