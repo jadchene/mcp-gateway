@@ -134,18 +134,21 @@ export class ServiceRegistry {
   }
 
   /**
-   * Lists tools for one logical service, optionally filtering by one or more tool name keywords.
+   * Lists tools for one logical service, optionally matching name or description keywords.
    */
-  public listTools(serviceId: string, toolName?: string | string[]): ToolDefinition[] {
+  public listTools(serviceId: string, toolName?: string[], desc?: string[]): ToolDefinition[] {
     const tools = this.requireService(serviceId).metadata.tools;
-    const keywords = normalizeToolNameKeywords(toolName);
-    if (keywords.length === 0) {
+    const nameKeywords = normalizeKeywords(toolName);
+    const descriptionKeywords = normalizeKeywords(desc);
+    if (nameKeywords.length === 0 && descriptionKeywords.length === 0) {
       return tools;
     }
 
     return tools.filter((tool) => {
       const normalizedName = tool.name.toLowerCase();
-      return keywords.some((keyword) => normalizedName.includes(keyword));
+      const normalizedDescription = tool.description?.toLowerCase() ?? "";
+      return nameKeywords.some((keyword) => normalizedName.includes(keyword))
+        || descriptionKeywords.some((keyword) => normalizedDescription.includes(keyword));
     });
   }
 
@@ -188,7 +191,7 @@ export class ServiceRegistry {
   }
 
   /**
-   * Manages one service runtime or persisted enable flag through a compact action interface.
+   * Reconnects one service or persists its enabled state through the config file.
    */
   public async manageService(
     serviceId: string,
@@ -459,15 +462,14 @@ function createClient(service: ServiceConfig, logger: Logger): McpClient {
 }
 
 /**
- * Normalizes optional tool name keywords for case-insensitive filtering.
+ * Normalizes optional keywords for case-insensitive filtering.
  */
-function normalizeToolNameKeywords(toolName: string | string[] | undefined): string[] {
-  if (!toolName) {
+function normalizeKeywords(input: string[] | undefined): string[] {
+  if (!input) {
     return [];
   }
 
-  const values = Array.isArray(toolName) ? toolName : [toolName];
-  return values
+  return input
     .map((value) => value.trim().toLowerCase())
     .filter((value) => value !== "");
 }

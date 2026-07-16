@@ -24,7 +24,7 @@ test("McpGatewayEngine returns a tool-name-keyed schema payload for one tool", (
 
   const result = engine.getToolSchema({
     serviceId: "playwright",
-    toolName: "browser_tabs"
+    toolName: ["browser_tabs"]
   }) as { structuredContent?: Record<string, unknown> };
 
   assert.deepEqual(result.structuredContent, {
@@ -87,15 +87,36 @@ test("McpGatewayEngine returns schemas for multiple tool names", () => {
   });
 });
 
-test("McpGatewayEngine rejects an empty toolName array for schema lookup", () => {
+test("McpGatewayEngine rejects invalid toolName values for schema lookup", () => {
   const engine = createGatewayEngineForTest(createRegistryStub({ tools: [] }));
 
+  assert.throws(
+    () => engine.getToolSchema({
+      serviceId: "playwright",
+      toolName: "browser_tabs"
+    }),
+    /toolName.*non-empty string array/
+  );
   assert.throws(
     () => engine.getToolSchema({
       serviceId: "playwright",
       toolName: []
     }),
     /toolName.*non-empty string array/
+  );
+  assert.throws(
+    () => engine.getToolSchema({
+      serviceId: "playwright",
+      toolName: ["browser_tabs", "browser_tabs"]
+    }),
+    /toolName.*unique non-empty string array/
+  );
+  assert.throws(
+    () => engine.getToolSchema({
+      serviceId: "playwright",
+      toolName: [" "]
+    }),
+    /toolName.*unique non-empty string array/
   );
 });
 
@@ -161,7 +182,40 @@ test("McpGatewayEngine advertises includeSchema on gateway_list_tools", () => {
   });
 });
 
-test("McpGatewayEngine advertises string or array tool names for gateway_get_tool_schema", () => {
+test("McpGatewayEngine advertises description keyword filtering on gateway_list_tools", () => {
+  const tool = buildGatewayTools().find((candidate) => candidate.name === "gateway_list_tools") as {
+    description?: string;
+    inputSchema?: {
+      properties?: Record<string, unknown>;
+    };
+  } | undefined;
+
+  assert.equal(tool?.description, "Lists downstream tools by case-insensitive name or description substring filters and optionally includes each matching schema.");
+  assert.deepEqual(tool?.inputSchema?.properties?.toolName, {
+    type: "array",
+    description: "Optional unique name substrings. Matching is case-insensitive; any name or description keyword may match.",
+    minItems: 1,
+    uniqueItems: true,
+    items: {
+      type: "string",
+      minLength: 1,
+      pattern: "\\S"
+    }
+  });
+  assert.deepEqual(tool?.inputSchema?.properties?.desc, {
+    type: "array",
+    description: "Optional unique literal description substrings. Matching is case-insensitive and may hit negative guidance, so inspect candidate descriptions. Name and description filters use OR.",
+    minItems: 1,
+    uniqueItems: true,
+    items: {
+      type: "string",
+      minLength: 1,
+      pattern: "\\S"
+    }
+  });
+});
+
+test("McpGatewayEngine advertises array-only tool names for gateway_get_tool_schema", () => {
   const tool = buildGatewayTools().find((candidate) => candidate.name === "gateway_get_tool_schema") as {
     description?: string;
     inputSchema?: {
@@ -169,25 +223,111 @@ test("McpGatewayEngine advertises string or array tool names for gateway_get_too
     };
   } | undefined;
 
-  assert.equal(tool?.description, "Returns input and output schemas for one or more downstream tools, keyed by tool name.");
+  assert.equal(tool?.description, "Returns schemas for exact, case-sensitive downstream tool names, keyed by name; the whole request fails when any name is unknown.");
   assert.deepEqual(tool?.inputSchema?.properties?.toolName, {
-    anyOf: [
-      {
-        type: "string",
-        description: "Downstream tool name.",
-        minLength: 1
-      },
-      {
-        type: "array",
-        description: "Downstream tool names whose schemas should be returned.",
-        minItems: 1,
-        items: {
-          type: "string",
-          minLength: 1
-        }
-      }
-    ]
+    type: "array",
+    description: "Unique exact, case-sensitive downstream tool names returned by gateway_list_tools.",
+    minItems: 1,
+    uniqueItems: true,
+    items: {
+      type: "string",
+      minLength: 1,
+      pattern: "\\S"
+    }
   });
+});
+
+test("McpGatewayEngine advertises stable output schemas and leaves forwarded results open", () => {
+  const tools = Object.fromEntries(buildGatewayTools().map((tool) => [tool.name, tool]));
+  const fixedOutputTools = [
+    "gateway_list_services",
+    "gateway_get_service",
+    "gateway_list_tools",
+    "gateway_get_tool_schema",
+    "gateway_manage_service"
+  ];
+
+  for (const toolName of fixedOutputTools) {
+    assert.equal(typeof tools[toolName]?.outputSchema, "object", `${toolName} should expose outputSchema`);
+  }
+  assert.equal(tools.gateway_call_tool?.outputSchema, undefined);
+
+  const serviceOutput = tools.gateway_get_service?.outputSchema as { required?: string[] };
+  assert.deepEqual(serviceOutput.required, [
+    "serviceId",
+    "name",
+    "description",
+    "available",
+    "lastError",
+    "lastConnectedAt",
+    "protocolVersion",
+    "serverInfo"
+  ]);
+
+  const schemaOutput = tools.gateway_get_tool_schema?.outputSchema as {
+    properties?: {
+      schemas?: Record<string, unknown>;
+    };
+  };
+  assert.equal(schemaOutput.properties?.schemas?.minProperties, 1);
+});
+
+test("McpGatewayEngine advertises non-blank identifiers and explicit side effects", () => {
+  const tools = Object.fromEntries(buildGatewayTools().map((tool) => [tool.name, tool]));
+  const getService = tools.gateway_get_service as {
+    description?: string;
+    inputSchema?: { properties?: Record<string, unknown> };
+  };
+  const manageService = tools.gateway_manage_service as {
+    description?: string;
+    inputSchema?: { properties?: Record<string, unknown> };
+  };
+  const callTool = tools.gateway_call_tool as {
+    description?: string;
+    inputSchema?: { properties?: Record<string, unknown> };
+  };
+
+  assert.equal(getService.description, "Returns one downstream service's configured identity, availability, recent error and connection time, protocol version, and server information.");
+  assert.deepEqual(getService.inputSchema?.properties?.serviceId, {
+    type: "string",
+    description: "Logical downstream service identifier returned by gateway_list_services.",
+    minLength: 1,
+    pattern: "\\S"
+  });
+  assert.equal(manageService.description, "Reconnects a downstream service without changing config, or persistently enables or disables it in the gateway config and reloads the registry.");
+  assert.deepEqual(manageService.inputSchema?.properties?.action, {
+    type: "string",
+    description: "reconnect refreshes the connection and metadata without changing config; enable and disable persist the enable flag and reload the registry.",
+    enum: ["reconnect", "enable", "disable"]
+  });
+  assert.equal(callTool.description, "Calls one exact downstream tool and forwards its result unchanged. The downstream tool may have read or write side effects; inspect its schema and service rules first.");
+  assert.deepEqual(callTool.inputSchema?.properties?.toolName, {
+    type: "string",
+    description: "Exact, case-sensitive downstream tool name returned by gateway_list_tools.",
+    minLength: 1,
+    pattern: "\\S"
+  });
+  assert.deepEqual(callTool.inputSchema?.properties?.arguments, {
+    type: "object",
+    description: "Required arguments object built from the downstream inputSchema. Pass an empty object when the tool has no arguments."
+  });
+});
+
+test("McpGatewayEngine rejects blank service and exact tool identifiers at runtime", async () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({}));
+
+  assert.throws(
+    () => engine.getService({ serviceId: "   " }),
+    /serviceId.*must be a string/
+  );
+  await assert.rejects(
+    () => engine.callDownstreamTool({
+      serviceId: "demo",
+      toolName: "   ",
+      arguments: {}
+    }),
+    /toolName.*must be a string/
+  );
 });
 
 test("McpGatewayEngine filters listed tools by tool name keyword", () => {
@@ -217,7 +357,7 @@ test("McpGatewayEngine filters listed tools by tool name keyword", () => {
 
   const result = engine.listTools({
     serviceId: "playwright",
-    toolName: "table"
+    toolName: ["table"]
   }) as { structuredContent?: { tools?: Array<Record<string, unknown>> } };
 
   assert.deepEqual(result.structuredContent, {
@@ -276,6 +416,153 @@ test("McpGatewayEngine filters listed tools by multiple tool name keywords", () 
       }
     ]
   });
+});
+
+test("McpGatewayEngine rejects invalid toolName values for tool listing", () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({ tools: [] }));
+
+  assert.throws(
+    () => engine.listTools({
+      serviceId: "playwright",
+      toolName: "table"
+    }),
+    /toolName.*non-empty string array/
+  );
+  assert.throws(
+    () => engine.listTools({
+      serviceId: "playwright",
+      toolName: []
+    }),
+    /toolName.*non-empty string array/
+  );
+  assert.throws(
+    () => engine.listTools({
+      serviceId: "playwright",
+      toolName: ["table", "table"]
+    }),
+    /toolName.*unique non-empty string array/
+  );
+  assert.throws(
+    () => engine.listTools({
+      serviceId: "playwright",
+      toolName: [" "]
+    }),
+    /toolName.*unique non-empty string array/
+  );
+});
+
+test("McpGatewayEngine filters listed tools by description keywords", () => {
+  const registry = createRegistryStub({
+    tools: [
+      {
+        name: "database_list_tables",
+        description: "List configured database objects",
+        inputSchema: null,
+        outputSchema: null
+      },
+      {
+        name: "database_describe_table",
+        description: "Inspect columns and primary keys",
+        inputSchema: null,
+        outputSchema: null
+      },
+      {
+        name: "database_ping",
+        description: undefined,
+        inputSchema: null,
+        outputSchema: null
+      }
+    ]
+  });
+  const engine = createGatewayEngineForTest(registry);
+
+  const result = engine.listTools({
+    serviceId: "playwright",
+    desc: ["BASE OBJ", "MARY KE"]
+  }) as { structuredContent?: { tools?: Array<Record<string, unknown>> } };
+
+  assert.deepEqual(result.structuredContent, {
+    tools: [
+      {
+        name: "database_list_tables",
+        description: "List configured database objects"
+      },
+      {
+        name: "database_describe_table",
+        description: "Inspect columns and primary keys"
+      }
+    ]
+  });
+});
+
+test("McpGatewayEngine combines name and description filters with OR", () => {
+  const registry = createRegistryStub({
+    tools: [
+      {
+        name: "database_list_tables",
+        description: "List configured objects",
+        inputSchema: null,
+        outputSchema: null
+      },
+      {
+        name: "database_describe_table",
+        description: "Inspect table columns",
+        inputSchema: null,
+        outputSchema: null
+      },
+      {
+        name: "gitea_search_issues",
+        description: "Search repository tickets",
+        inputSchema: null,
+        outputSchema: null
+      }
+    ]
+  });
+  const engine = createGatewayEngineForTest(registry);
+
+  const result = engine.listTools({
+    serviceId: "playwright",
+    toolName: ["describe"],
+    desc: ["POSITORY TICK"]
+  }) as { structuredContent?: { tools?: Array<Record<string, unknown>> } };
+
+  assert.deepEqual(result.structuredContent?.tools?.map((tool) => tool.name), [
+    "database_describe_table",
+    "gitea_search_issues"
+  ]);
+});
+
+test("McpGatewayEngine rejects invalid desc arguments", () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({ tools: [] }));
+
+  assert.throws(
+    () => engine.listTools({
+      serviceId: "playwright",
+      desc: "database"
+    }),
+    /desc.*non-empty string array/
+  );
+  assert.throws(
+    () => engine.listTools({
+      serviceId: "playwright",
+      desc: []
+    }),
+    /desc.*non-empty string array/
+  );
+  assert.throws(
+    () => engine.listTools({
+      serviceId: "playwright",
+      desc: ["database", "database"]
+    }),
+    /desc.*unique non-empty string array/
+  );
+  assert.throws(
+    () => engine.listTools({
+      serviceId: "playwright",
+      desc: [" "]
+    }),
+    /desc.*unique non-empty string array/
+  );
 });
 
 test("McpGatewayEngine includes schemas for every listed tool when requested", () => {
@@ -378,6 +665,18 @@ test("McpGatewayEngine forwards downstream tool results without extra gateway wr
   assert.deepEqual(result, downstreamResult);
 });
 
+test("McpGatewayEngine requires an explicit downstream arguments object", async () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({}));
+
+  await assert.rejects(
+    () => engine.callDownstreamTool({
+      serviceId: "demo",
+      toolName: "echo"
+    }),
+    /arguments.*must be an object/
+  );
+});
+
 test("McpGatewayEngine waits for the startup barrier before handling tool calls", async () => {
   let releaseBarrier: (() => void) | null = null;
   const startupBarrier = new Promise<void>((resolve) => {
@@ -469,7 +768,7 @@ function createRegistryStub(overrides: {
 }): {
   listServices: () => ServiceRuntimeSnapshot[];
   getService: (serviceId: string) => ServiceRuntimeSnapshot | null;
-  listTools: (serviceId: string, toolName?: string | string[]) => ToolDefinition[];
+  listTools: (serviceId: string, toolName?: string[], desc?: string[]) => ToolDefinition[];
   getTool: (serviceId: string, toolName: string) => ToolDefinition | null;
   callTool: (serviceId: string, toolName: string, args: Record<string, unknown>) => Promise<{
     result: unknown;
@@ -510,22 +809,27 @@ function createRegistryStub(overrides: {
   return {
     listServices: () => [snapshot],
     getService: (serviceId: string) => serviceId === snapshot.config.serviceId ? snapshot : null,
-    listTools: (serviceId: string, toolName?: string | string[]) => {
+    listTools: (serviceId: string, toolName?: string[], desc?: string[]) => {
       if (serviceId !== snapshot.config.serviceId) {
         return [];
       }
 
-      const keywords = (Array.isArray(toolName) ? toolName : [toolName])
-        .filter((value): value is string => typeof value === "string" && value.trim() !== "")
+      const nameKeywords = (toolName ?? [])
+        .filter((value) => value.trim() !== "")
+        .map((value) => value.toLowerCase());
+      const descriptionKeywords = (desc ?? [])
+        .filter((value) => value.trim() !== "")
         .map((value) => value.toLowerCase());
 
-      if (keywords.length === 0) {
+      if (nameKeywords.length === 0 && descriptionKeywords.length === 0) {
         return snapshot.metadata.tools;
       }
 
       return snapshot.metadata.tools.filter((tool) => {
         const normalizedName = tool.name.toLowerCase();
-        return keywords.some((keyword) => normalizedName.includes(keyword));
+        const normalizedDescription = tool.description?.toLowerCase() ?? "";
+        return nameKeywords.some((keyword) => normalizedName.includes(keyword))
+          || descriptionKeywords.some((keyword) => normalizedDescription.includes(keyword));
       });
     },
     getTool: (serviceId: string, toolName: string) => (

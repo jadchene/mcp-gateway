@@ -150,23 +150,27 @@ The gateway exposes six public tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `gateway_list_services` | List all downstream MCP services managed by the gateway, including each `serviceId`, description, and availability. |
-| `gateway_get_service` | Return one service summary, runtime state, recent errors, and cached metadata. Use this for diagnostics. |
-| `gateway_list_tools` | List tools exposed by one downstream service. Optional `toolName` filters by one or more name fragments; `includeSchema: true` includes each matching tool's input and output schemas. |
-| `gateway_get_tool_schema` | Return input and output schemas for one or more exact tool names, keyed by tool name. |
-| `gateway_manage_service` | Reconnect a service or persistently enable/disable it in the config file. |
-| `gateway_call_tool` | Call one downstream tool through the gateway and return the downstream MCP result. |
+| `gateway_list_services` | List downstream services with each logical `serviceId`, description, and current availability. |
+| `gateway_get_service` | Return one service's identity, availability, recent error and connection time, protocol version, and server information. Use this for diagnostics. |
+| `gateway_list_tools` | Search tool names or descriptions by case-insensitive literal substrings. Optional unique non-empty `toolName` and `desc` arrays use OR; `includeSchema: true` includes schemas. |
+| `gateway_get_tool_schema` | Return schemas for unique exact, case-sensitive tool names. Results are keyed by name, and any unknown name fails the whole request. |
+| `gateway_manage_service` | Reconnect without changing config, or persistently enable/disable a service in the config and reload the registry. |
+| `gateway_call_tool` | Call one exact downstream tool and forward its result unchanged. The downstream tool may have read or write side effects. |
 
 Default token-efficient workflow:
 
 1. Call `gateway_list_services` once.
-2. Call `gateway_list_tools(serviceId)` only when a service is needed. Use `toolName` to filter large tool lists by name.
-3. When all filtered matches need schemas, pass `includeSchema: true`; when exact tool names are already known, call `gateway_get_tool_schema` with one name or a name array.
+2. Call `gateway_list_tools(serviceId)` only when a service is needed. Use a `toolName` array for name keywords and a `desc` array for description keywords.
+3. When all filtered matches need schemas, pass `includeSchema: true`; when exact tool names are already known, call `gateway_get_tool_schema` with a non-empty name array.
 4. Call `gateway_call_tool` to execute the downstream tool.
 5. Use `gateway_get_service` only for diagnostics.
 6. Use `gateway_manage_service` only to reconnect, enable, or disable a service.
 
-`gateway_get_tool_schema` accepts `toolName` as a string or non-empty string array and returns a `schemas` object keyed by each requested tool name.
+`gateway_get_tool_schema.toolName` is a required unique non-empty string array and returns a `schemas` object keyed by each requested exact tool name. Use a one-element array when requesting one schema.
+
+`gateway_list_tools.toolName` and `gateway_list_tools.desc` are optional unique non-empty string arrays. Matching is case-insensitive and uses literal substrings. When both are present, a tool is returned when either its name or description matches any supplied keyword. Description matching can also hit negative guidance such as "when not to use", so inspect the returned descriptions before selecting a tool.
+
+All gateway tools with stable structured content expose an `outputSchema`. `gateway_call_tool` intentionally omits a fixed output schema because it forwards arbitrary downstream results. Its `arguments` object is always required; pass `{}` for a downstream tool with no arguments.
 
 `gateway_manage_service` actions:
 
