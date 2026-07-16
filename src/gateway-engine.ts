@@ -145,30 +145,44 @@ export class McpGatewayEngine {
   public listTools(args: JsonObject): unknown {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
     const toolName = optionalStringArray(args.toolName, "The 'toolName' argument must be a string or string array when provided.");
+    const includeSchema = optionalBoolean(args.includeSchema, "The 'includeSchema' argument must be a boolean when provided.") ?? false;
     return successContent({
-      tools: this.registry.listTools(serviceId, toolName).map((tool) => ({
-        name: tool.name,
-        description: tool.description ?? null
-      }))
+      tools: this.registry.listTools(serviceId, toolName).map((tool) => {
+        const summary: JsonObject = {
+          name: tool.name,
+          description: tool.description ?? null
+        };
+
+        if (includeSchema) {
+          summary.inputSchema = tool.inputSchema ?? null;
+          summary.outputSchema = tool.outputSchema ?? null;
+        }
+
+        return summary;
+      })
     });
   }
 
   /**
-   * Returns input and output schemas for one downstream tool.
+   * Returns input and output schemas keyed by downstream tool name.
    */
   public getToolSchema(args: JsonObject): unknown {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
-    const toolName = requireString(args.toolName, "The 'toolName' argument must be a string.");
-    const tool = this.registry.getTool(serviceId, toolName);
+    const toolNames = requireStringArray(args.toolName, "The 'toolName' argument must be a non-empty string or non-empty string array.");
+    const schemas = Object.fromEntries(toolNames.map((toolName) => {
+      const tool = this.registry.getTool(serviceId, toolName);
 
-    if (!tool) {
-      throw new Error(`Unknown tool '${toolName}' in service '${serviceId}'.`);
-    }
+      if (!tool) {
+        throw new Error(`Unknown tool '${toolName}' in service '${serviceId}'.`);
+      }
 
-    return successContent({
-      inputSchema: tool.inputSchema ?? null,
-      outputSchema: tool.outputSchema ?? null
-    });
+      return [toolName, {
+        inputSchema: tool.inputSchema ?? null,
+        outputSchema: tool.outputSchema ?? null
+      }] as const;
+    }));
+
+    return successContent({ schemas });
   }
 
   /**
@@ -239,7 +253,7 @@ export function buildGatewayTools(): JsonObject[] {
     },
     {
       name: "gateway_list_tools",
-      description: "Lists tools exposed by one downstream service, optionally filtered by one or more tool name keywords.",
+      description: "Lists tools exposed by one downstream service, optionally filtered by name keywords and including their schemas.",
       inputSchema: objectSchema(["serviceId"], {
         serviceId: stringSchema("Logical service identifier."),
         toolName: {
@@ -253,15 +267,36 @@ export function buildGatewayTools(): JsonObject[] {
               }
             }
           ]
+        },
+        includeSchema: {
+          type: "boolean",
+          description: "Includes inputSchema and outputSchema in every returned tool when true. Defaults to false."
         }
       })
     },
     {
       name: "gateway_get_tool_schema",
-      description: "Returns the input and output schema for one downstream tool.",
+      description: "Returns input and output schemas for one or more downstream tools, keyed by tool name.",
       inputSchema: objectSchema(["serviceId", "toolName"], {
         serviceId: stringSchema("Logical service identifier."),
-        toolName: stringSchema("Downstream tool name.")
+        toolName: {
+          anyOf: [
+            {
+              type: "string",
+              description: "Downstream tool name.",
+              minLength: 1
+            },
+            {
+              type: "array",
+              description: "Downstream tool names whose schemas should be returned.",
+              minItems: 1,
+              items: {
+                type: "string",
+                minLength: 1
+              }
+            }
+          ]
+        }
       })
     },
     {
@@ -378,6 +413,37 @@ function optionalStringArray(input: unknown, message: string): string | string[]
 
   const trimmed = input.trim();
   return trimmed === "" ? undefined : trimmed;
+}
+
+/**
+ * Returns one or more required non-empty strings with duplicates removed.
+ */
+function requireStringArray(input: unknown, message: string): string[] {
+  if (typeof input === "string") {
+    if (input.trim() === "") {
+      throw new Error(message);
+    }
+    return [input];
+  }
+
+  if (!Array.isArray(input) || input.length === 0 || input.some((value) => typeof value !== "string" || value.trim() === "")) {
+    throw new Error(message);
+  }
+
+  return [...new Set(input)];
+}
+
+/**
+ * Returns an optional boolean without coercing other input types.
+ */
+function optionalBoolean(input: unknown, message: string): boolean | undefined {
+  if (input === undefined || input === null) {
+    return undefined;
+  }
+  if (typeof input !== "boolean") {
+    throw new Error(message);
+  }
+  return input;
 }
 
 /**

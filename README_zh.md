@@ -152,8 +152,8 @@ HTTP endpoint 使用同一路径处理 `GET` 和 `POST`：
 | --- | --- |
 | `gateway_list_services` | 列出网关管理的所有下游 MCP 服务，包括 `serviceId`、描述和可用状态。 |
 | `gateway_get_service` | 返回单个服务的摘要、运行状态、最近错误和缓存元数据。主要用于诊断。 |
-| `gateway_list_tools` | 列出某个下游服务暴露的工具。可用 `toolName` 按一个或多个名称片段过滤。 |
-| `gateway_get_tool_schema` | 返回某个下游工具的输入和输出 schema。 |
+| `gateway_list_tools` | 列出某个下游服务暴露的工具。可用 `toolName` 按一个或多个名称片段过滤；传入 `includeSchema: true` 时返回每个匹配工具的输入和输出 schema。 |
+| `gateway_get_tool_schema` | 按一个或多个准确工具名返回输入和输出 schema，并以工具名作为结果 key。 |
 | `gateway_manage_service` | 重连服务，或把启用/禁用状态持久化写入配置文件。 |
 | `gateway_call_tool` | 通过网关调用一个下游工具，并返回下游 MCP 结果。 |
 
@@ -161,10 +161,12 @@ HTTP endpoint 使用同一路径处理 `GET` 和 `POST`：
 
 1. 调用一次 `gateway_list_services`。
 2. 真正需要某个服务时，再调用 `gateway_list_tools(serviceId)`。工具很多时可用 `toolName` 按名称过滤。
-3. 第一次使用某个工具前，调用 `gateway_get_tool_schema(serviceId, toolName)`。
+3. 所有筛选结果都需要 schema 时，传入 `includeSchema: true`；已知准确工具名时，调用 `gateway_get_tool_schema` 并传入单个名称或名称数组。
 4. 调用 `gateway_call_tool` 执行下游工具。
 5. 只有诊断时才使用 `gateway_get_service`。
 6. 只有需要重连、启用或禁用服务时才使用 `gateway_manage_service`。
+
+`gateway_get_tool_schema` 的 `toolName` 接受字符串或非空字符串数组，返回的 `schemas` 对象以每个请求的工具名为 key。
 
 `gateway_manage_service` 动作：
 

@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { McpGatewayEngine } from "../src/gateway-engine.ts";
+import { buildGatewayTools, McpGatewayEngine } from "../src/gateway-engine.ts";
 import { Logger } from "../src/logger.ts";
 import type { ServiceRuntimeSnapshot, ToolDefinition } from "../src/types.ts";
 
-test("McpGatewayEngine returns a compact tool schema payload", () => {
+test("McpGatewayEngine returns a tool-name-keyed schema payload for one tool", () => {
   const tool: ToolDefinition = {
     name: "browser_tabs",
     description: "List tabs",
@@ -28,9 +28,95 @@ test("McpGatewayEngine returns a compact tool schema payload", () => {
   }) as { structuredContent?: Record<string, unknown> };
 
   assert.deepEqual(result.structuredContent, {
-    inputSchema: tool.inputSchema,
-    outputSchema: null
+    schemas: {
+      browser_tabs: {
+        inputSchema: tool.inputSchema,
+        outputSchema: null
+      }
+    }
   });
+});
+
+test("McpGatewayEngine returns schemas for multiple tool names", () => {
+  const tools: ToolDefinition[] = [
+    {
+      name: "browser_tabs",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: { type: "string" }
+        }
+      },
+      outputSchema: null
+    },
+    {
+      name: "browser_navigate",
+      inputSchema: {
+        type: "object",
+        properties: {
+          url: { type: "string" }
+        },
+        required: ["url"]
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string" }
+        }
+      }
+    }
+  ];
+  const engine = createGatewayEngineForTest(createRegistryStub({ tools }));
+
+  const result = engine.getToolSchema({
+    serviceId: "playwright",
+    toolName: ["browser_tabs", "browser_navigate"]
+  }) as { structuredContent?: Record<string, unknown> };
+
+  assert.deepEqual(result.structuredContent, {
+    schemas: {
+      browser_tabs: {
+        inputSchema: tools[0]?.inputSchema,
+        outputSchema: null
+      },
+      browser_navigate: {
+        inputSchema: tools[1]?.inputSchema,
+        outputSchema: tools[1]?.outputSchema
+      }
+    }
+  });
+});
+
+test("McpGatewayEngine rejects an empty toolName array for schema lookup", () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({ tools: [] }));
+
+  assert.throws(
+    () => engine.getToolSchema({
+      serviceId: "playwright",
+      toolName: []
+    }),
+    /toolName.*non-empty string array/
+  );
+});
+
+test("McpGatewayEngine rejects a batch schema lookup when any tool is unknown", () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({
+    tools: [
+      {
+        name: "browser_tabs",
+        inputSchema: { type: "object" },
+        outputSchema: null
+      }
+    ]
+  }));
+
+  assert.throws(
+    () => engine.getToolSchema({
+      serviceId: "playwright",
+      toolName: ["browser_tabs", "browser_missing"]
+    }),
+    /Unknown tool 'browser_missing'/
+  );
 });
 
 test("McpGatewayEngine returns a minimal service list payload", () => {
@@ -59,6 +145,48 @@ test("McpGatewayEngine returns a minimal service list payload", () => {
         }
       ]
     });
+  });
+});
+
+test("McpGatewayEngine advertises includeSchema on gateway_list_tools", () => {
+  const tool = buildGatewayTools().find((candidate) => candidate.name === "gateway_list_tools") as {
+    inputSchema?: {
+      properties?: Record<string, unknown>;
+    };
+  } | undefined;
+
+  assert.deepEqual(tool?.inputSchema?.properties?.includeSchema, {
+    type: "boolean",
+    description: "Includes inputSchema and outputSchema in every returned tool when true. Defaults to false."
+  });
+});
+
+test("McpGatewayEngine advertises string or array tool names for gateway_get_tool_schema", () => {
+  const tool = buildGatewayTools().find((candidate) => candidate.name === "gateway_get_tool_schema") as {
+    description?: string;
+    inputSchema?: {
+      properties?: Record<string, unknown>;
+    };
+  } | undefined;
+
+  assert.equal(tool?.description, "Returns input and output schemas for one or more downstream tools, keyed by tool name.");
+  assert.deepEqual(tool?.inputSchema?.properties?.toolName, {
+    anyOf: [
+      {
+        type: "string",
+        description: "Downstream tool name.",
+        minLength: 1
+      },
+      {
+        type: "array",
+        description: "Downstream tool names whose schemas should be returned.",
+        minItems: 1,
+        items: {
+          type: "string",
+          minLength: 1
+        }
+      }
+    ]
   });
 });
 
@@ -148,6 +276,73 @@ test("McpGatewayEngine filters listed tools by multiple tool name keywords", () 
       }
     ]
   });
+});
+
+test("McpGatewayEngine includes schemas for every listed tool when requested", () => {
+  const tools: ToolDefinition[] = [
+    {
+      name: "database_list_tables",
+      description: "List database tables",
+      inputSchema: {
+        type: "object",
+        properties: {
+          database: { type: "string" }
+        },
+        required: ["database"]
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          tables: {
+            type: "array",
+            items: { type: "string" }
+          }
+        }
+      }
+    },
+    {
+      name: "database_ping",
+      description: undefined,
+      inputSchema: undefined,
+      outputSchema: null
+    }
+  ];
+  const registry = createRegistryStub({ tools });
+  const engine = createGatewayEngineForTest(registry);
+
+  const result = engine.listTools({
+    serviceId: "playwright",
+    includeSchema: true
+  }) as { structuredContent?: { tools?: Array<Record<string, unknown>> } };
+
+  assert.deepEqual(result.structuredContent, {
+    tools: [
+      {
+        name: "database_list_tables",
+        description: "List database tables",
+        inputSchema: tools[0]?.inputSchema,
+        outputSchema: tools[0]?.outputSchema
+      },
+      {
+        name: "database_ping",
+        description: null,
+        inputSchema: null,
+        outputSchema: null
+      }
+    ]
+  });
+});
+
+test("McpGatewayEngine rejects a non-boolean includeSchema argument", () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({ tools: [] }));
+
+  assert.throws(
+    () => engine.listTools({
+      serviceId: "playwright",
+      includeSchema: "true"
+    }),
+    /includeSchema.*boolean/
+  );
 });
 
 test("McpGatewayEngine forwards downstream tool results without extra gateway wrapping", async () => {

@@ -152,8 +152,8 @@ The gateway exposes six public tools:
 | --- | --- |
 | `gateway_list_services` | List all downstream MCP services managed by the gateway, including each `serviceId`, description, and availability. |
 | `gateway_get_service` | Return one service summary, runtime state, recent errors, and cached metadata. Use this for diagnostics. |
-| `gateway_list_tools` | List tools exposed by one downstream service. Optional `toolName` filters by one or more name fragments. |
-| `gateway_get_tool_schema` | Return the input and output schema for one downstream tool. |
+| `gateway_list_tools` | List tools exposed by one downstream service. Optional `toolName` filters by one or more name fragments; `includeSchema: true` includes each matching tool's input and output schemas. |
+| `gateway_get_tool_schema` | Return input and output schemas for one or more exact tool names, keyed by tool name. |
 | `gateway_manage_service` | Reconnect a service or persistently enable/disable it in the config file. |
 | `gateway_call_tool` | Call one downstream tool through the gateway and return the downstream MCP result. |
 
@@ -161,10 +161,12 @@ Default token-efficient workflow:
 
 1. Call `gateway_list_services` once.
 2. Call `gateway_list_tools(serviceId)` only when a service is needed. Use `toolName` to filter large tool lists by name.
-3. Call `gateway_get_tool_schema(serviceId, toolName)` before first use of a tool.
+3. When all filtered matches need schemas, pass `includeSchema: true`; when exact tool names are already known, call `gateway_get_tool_schema` with one name or a name array.
 4. Call `gateway_call_tool` to execute the downstream tool.
 5. Use `gateway_get_service` only for diagnostics.
 6. Use `gateway_manage_service` only to reconnect, enable, or disable a service.
+
+`gateway_get_tool_schema` accepts `toolName` as a string or non-empty string array and returns a `schemas` object keyed by each requested tool name.
 
 `gateway_manage_service` actions:
 
