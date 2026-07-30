@@ -193,17 +193,6 @@ test("validateGatewayConfig rejects removed non-standard transport options", () 
       }
     }]
   }), /mode is no longer supported/);
-
-  assert.throws(() => validateGatewayConfig({
-    services: [{
-      ...baseService,
-      transport: {
-        type: "http",
-        url: "http://127.0.0.1:3200/sse",
-        enableJsonResponse: false
-      }
-    }]
-  }), /enableJsonResponse is no longer supported/);
 });
 
 test("validateGatewayConfig rejects removed protocol pinning", () => {

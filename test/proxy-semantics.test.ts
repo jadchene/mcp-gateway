@@ -214,8 +214,7 @@ async function withProxy(
     enable: true,
     host: "127.0.0.1",
     port: 0,
-    path: "/mcp",
-    enableJsonResponse: false
+    path: "/mcp"
   }, engine, logger);
   await gateway.start();
 

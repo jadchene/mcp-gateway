@@ -16,19 +16,17 @@ test("parseCliArgs enables HTTP only when --http is present", () => {
       enable: true,
       host: "127.0.0.1",
       port: 3000,
-      path: "/mcp",
-      enableJsonResponse: false
+      path: "/mcp"
     }
   });
 
-  assert.deepEqual(parseCliArgs(["--config", "./config.json", "--http", "--port", "3100", "--path", "/mcp", "--json-response"]), {
+  assert.deepEqual(parseCliArgs(["--config", "./config.json", "--http", "--port", "3100", "--path", "/mcp"]), {
     configPath: "./config.json",
     server: {
       enable: true,
       host: "127.0.0.1",
       port: 3100,
-      path: "/mcp",
-      enableJsonResponse: true
+      path: "/mcp"
     }
   });
 });

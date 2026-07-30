@@ -151,7 +151,6 @@ export function parseCliArgs(args: string[]): CliOptions {
   const host = readOption(args, "--host");
   const path = readHttpPathOption(args);
   const enableHttp = args.includes("--http");
-  const enableJsonResponse = args.includes("--json-response");
   return {
     configPath,
     server: enableHttp
@@ -159,8 +158,7 @@ export function parseCliArgs(args: string[]): CliOptions {
           enable: true,
           host: host ?? "127.0.0.1",
           port: port ?? 3000,
-          path: path ?? "/mcp",
-          enableJsonResponse
+          path: path ?? "/mcp"
         }
       : undefined
   };

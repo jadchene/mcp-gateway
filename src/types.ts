@@ -42,10 +42,6 @@ export interface GatewayServerConfig {
    * Provides the single MCP endpoint path.
    */
   path: string;
-  /**
-   * Returns JSON-RPC responses directly from POST requests instead of SSE.
-   */
-  enableJsonResponse: boolean;
 }
 
 /**

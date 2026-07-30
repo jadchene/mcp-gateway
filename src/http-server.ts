@@ -38,7 +38,6 @@ export class StreamableHttpGatewayServer {
       () => createGatewayMcpServer(engine),
       {
         legacy: "stateless",
-        responseMode: config.enableJsonResponse ? "json" : "auto",
         onerror: (error) => {
           this.logger.error("gateway.http_protocol_error", { message: error.message });
         }
@@ -84,8 +83,7 @@ export class StreamableHttpGatewayServer {
     this.logger.info("gateway.http_started", {
       host: this.config.host,
       port: this.config.port,
-      path: this.config.path,
-      responseMode: this.config.enableJsonResponse ? "json" : "auto"
+      path: this.config.path
     });
   }
 

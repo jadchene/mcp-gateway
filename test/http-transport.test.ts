@@ -205,8 +205,8 @@ test("StreamableHttpGatewayServer returns the standard unsupported-version error
   }
 });
 
-test("StreamableHttpGatewayServer retains explicit JSON response mode", async () => {
-  const server = createGatewayServer(true);
+test("StreamableHttpGatewayServer automatically returns JSON for a non-streaming exchange", async () => {
+  const server = createGatewayServer();
   await server.start();
   try {
     const response = await fetch(server.url, {
@@ -381,15 +381,14 @@ test("SDK list caching honors TTL and keeps private caches client-local", async 
   }
 });
 
-function createGatewayServer(enableJsonResponse = false): StreamableHttpGatewayServer {
+function createGatewayServer(): StreamableHttpGatewayServer {
   const logger = new Logger();
   const engine = new McpGatewayEngine(createRegistryStub() as never, logger);
   return new StreamableHttpGatewayServer({
     enable: true,
     host: "127.0.0.1",
     port: 0,
-    path: "/mcp",
-    enableJsonResponse
+    path: "/mcp"
   }, engine, logger);
 }
 

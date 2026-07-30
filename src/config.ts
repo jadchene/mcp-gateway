@@ -162,9 +162,6 @@ function validateHttpTransportConfig(serviceId: string, input: Record<string, un
   if (input.mode !== undefined) {
     throw new Error(`Service '${serviceId}' transport.mode is no longer supported; HTTP always uses Streamable HTTP.`);
   }
-  if (input.enableJsonResponse !== undefined) {
-    throw new Error(`Service '${serviceId}' transport.enableJsonResponse is no longer supported.`);
-  }
   if (input.protocolMode !== undefined) {
     throw new Error(`Service '${serviceId}' transport.protocolMode is no longer supported; protocol negotiation is automatic.`);
   }
