@@ -2,54 +2,105 @@
 
 # MCP Gateway
 
-MCP Gateway 是一个节省 token 的 Model Context Protocol 网关。它不把所有下游工具展开到每个客户端的启动上下文，而是通过 6 个稳定工具完成发现、管理和转发。
+## 简介
 
-MCP Gateway v0.6.4 使用官方 TypeScript SDK v2。
+MCP Gateway 把多个 MCP 服务收拢到一个入口。Agent 连接网关后只会看到 6 个路由工具，具体的下游服务、工具和 schema 在需要时再查询。
+
+项目使用官方 TypeScript SDK v2，需要 Node.js 24 或更高版本。
 
 > [!IMPORTANT]
-> MCP Gateway v0.6.2 及后续版本仅接受 MCP `2026-07-28`、`2025-11-25` 和 `2025-06-18`，传输方式仅支持标准换行分隔 stdio 和单端点 Streamable HTTP。不支持独立 HTTP+SSE（`/sse`）、`Content-Length` framing 和其他协议版本。
+> MCP Gateway v0.6.2 及后续版本仅接受 MCP `2026-07-28`、`2025-11-25` 和 `2025-06-18`。传输方式仅支持换行分隔 stdio 和单端点 Streamable HTTP。不支持独立 HTTP+SSE（`/sse`）、`Content-Length` framing 和其他协议版本。
 
-## 能力
+## 为什么使用
 
-- 上游同时支持 stdio 和无状态 Streamable HTTP。
-- 下游支持标准 stdio 和 Streamable HTTP。
-- 在 MCP `2026-07-28`、`2025-11-25` 与 `2025-06-18` 之间自动协商。
-- 入站传输自动服务这三个标准版本。
-- 完整转发下游工具元数据和 JSON Schema 2020-12。
-- 在全部受支持版本间桥接表单模式 elicitation，并由 SDK 处理 opaque `requestState`、任意 JSON `structuredContent`、取消传播和 `x-mcp-header`。
-- 遵守 SDK 缓存提示，private 缓存按客户端实例隔离。
-- 支持配置热更新、生命周期恢复、无效配置原子拒绝和可选文件日志。
-- 入站 HTTP 校验 Host 和 Origin；运行日志不会写入 MCP stdout。
+- 即使配置了很多 MCP 服务，也不会一次性占用大量 Agent 上下文。
+- Agent 只需接入一次，后续增减下游服务只改网关配置。
+- 可以按名称或描述查找工具，需要时再读取 schema。
+- Stdio 和 Streamable HTTP 服务使用同一套调用方式。
+- 修改配置文件后自动重载，不必重启网关。
 
-## 环境与安装
+## 快速开始
 
-- Node.js 24 或更高版本。
+### 安装
 
 ```bash
 npm install -g @jadchene/mcp-gateway-service
-cp config.example.json config.json
-mcp-gateway-service --config ./config.json
 ```
 
-额外启用入站 HTTP：
+创建 `config.json`，将 `your-mcp-service` 替换为已经安装的 MCP 服务命令：
+
+```json
+{
+  "services": [
+    {
+      "serviceId": "tools",
+      "name": "Tools",
+      "transport": {
+        "type": "stdio",
+        "command": "your-mcp-service"
+      }
+    }
+  ]
+}
+```
+
+### Stdio
+
+网关进程由 Agent 启动，不需要单独运行启动命令。
+
+Codex `config.toml`：
+
+```toml
+[mcp_servers.gateway]
+command = "mcp-gateway-service"
+args = ["--config", "./config.json"]
+```
+
+Claude Code：
 
 ```bash
-mcp-gateway-service --config ./config.json --http --host 127.0.0.1 --port 3100 --path /mcp
+claude mcp add gateway -- mcp-gateway-service --config ./config.json
 ```
 
-启用 HTTP 时，进程同时提供 stdio 和 HTTP 入口。使用 `--version` 或 `-v` 查看版本。
+### Streamable HTTP
 
-## 协议协商
+启动网关：
 
-协议选择完全自动：网关及其下游客户端优先协商 MCP `2026-07-28`，并根据对端能力协商 `2025-11-25` 或 `2025-06-18`。只接受这三个协议版本。入站 Streamable HTTP 的响应形态由官方 SDK 自动选择。
+```bash
+mcp-gateway-service --http --config ./config.json
+```
 
-三个协议版本都支持表单模式 elicitation。2025 下游发出的 `elicitation/create` 会直接转发给 2025 上游客户端；面对 2026 上游客户端时，网关会将其转换为 `input_required`，再使用返回的 opaque `requestState` 和 `inputResponses` 续调。每个 2025 下游连接上的工具调用会串行执行，避免表单响应串到其他调用。
+默认地址为 `http://127.0.0.1:3000/mcp`。
 
-对于 MCP `2025-11-25`，网关只协商已实现的能力，不声明实验性 Tasks、URL 模式 elicitation 和 sampling 工具调用。
+Codex `config.toml`：
 
-## 服务配置
+```toml
+[mcp_servers.gateway]
+url = "http://127.0.0.1:3000/mcp"
+```
 
-可通过 `--config`、`MCP_GATEWAY_CONFIG` 或当前目录的 `config.json` 指定配置。
+Claude Code：
+
+```bash
+claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
+```
+
+## 配置与工具
+
+### 启动参数
+
+| 参数 | 说明 | 默认值 |
+| --- | --- | --- |
+| `--config <path>` | 配置文件路径。 | `MCP_GATEWAY_CONFIG`，其次为 `./config.json` |
+| `--http` | 启用 Streamable HTTP。 | 不启用 |
+| `--host <host>` | HTTP 监听地址。 | `127.0.0.1` |
+| `--port <port>` | HTTP 监听端口。 | `3000` |
+| `--path <path>` | HTTP endpoint 路径。 | `/mcp` |
+| `--version`、`-v` | 输出已安装版本。 | — |
+
+启用 `--http` 后，stdio 入口仍然可用。
+
+### 配置文件
 
 ```json
 {
@@ -60,94 +111,78 @@ mcp-gateway-service --config ./config.json --http --host 127.0.0.1 --port 3100 -
   "services": [
     {
       "serviceId": "local-tools",
-      "enable": true,
       "name": "Local Tools",
       "transport": {
         "type": "stdio",
-        "command": "node",
-        "args": ["./server.js"]
+        "command": "your-mcp-service",
+        "args": []
       }
     },
     {
       "serviceId": "remote-tools",
-      "enable": true,
       "name": "Remote Tools",
       "transport": {
         "type": "http",
-        "url": "http://127.0.0.1:3200/mcp",
-        "headers": {
-          "Authorization": "Bearer example-token"
-        }
+        "url": "http://127.0.0.1:3200/mcp"
       }
     }
   ]
 }
 ```
 
-配置要点：
-
-- `enable` 默认为 `true`。
-- `logging.enable` 默认为 `false`；相对日志路径按配置文件所在目录解析。
-- stdio 始终使用标准的换行分隔 JSON-RPC 传输。
-- HTTP 始终使用标准的单端点 Streamable HTTP 传输。
-- 协议版本自动协商，不提供手动切换配置。
-- 支持静态 HTTP 请求头；请求头值和环境变量密钥不会写入日志。
-
-## 入站 Streamable HTTP
-
-MCP `2026-07-28` HTTP 是无状态的：每个请求都是独立的 `POST /mcp`。网关不创建 `Mcp-Session-Id`，`GET` 和 `DELETE` 返回 `405`。标准版本头、方法头、名称头、每请求 metadata 和协议错误由 SDK 校验。
-
-同一 endpoint 通过标准无状态 Streamable HTTP 服务 MCP `2025-11-25` 和 `2025-06-18`。作为下游客户端，如果任一版本的服务端签发 `Mcp-Session-Id`，网关会按标准维持该 session。
-
-默认只绑定 `127.0.0.1`。Host 和 Origin 校验用于防护 DNS rebinding；没有额外认证层时，不应把端口暴露到不可信网络。
-
-## 网关工具
-
-| 工具 | 用途 |
+| 字段 | 说明 |
 | --- | --- |
-| `gateway_list_services` | 列出下游服务和可用状态。 |
-| `gateway_get_service` | 查看服务状态、协议版本和服务端身份。 |
-| `gateway_list_tools` | 按名称或描述搜索工具，可选返回 schema。 |
-| `gateway_get_tool_schema` | 批量获取准确、区分大小写的工具 schema。 |
-| `gateway_manage_service` | 重连，或持久化启用/禁用一个服务。 |
-| `gateway_call_tool` | 调用一个下游工具并原样转发其 MCP 结果。 |
+| `services` | 下游 MCP 服务列表。 |
+| `serviceId` | 必填，网关工具使用的唯一服务标识。 |
+| `name` | 必填，服务名称。 |
+| `description` | 可选，服务说明。 |
+| `enable` | 可选，默认为 `true`。 |
+| `transport.type` | `stdio` 或 `http`。 |
+| `transport.command` | stdio 服务必填，启动命令。 |
+| `transport.args` | stdio 服务的可选命令参数。 |
+| `transport.cwd` | stdio 服务的可选工作目录。 |
+| `transport.env` | stdio 服务的可选环境变量。 |
+| `transport.url` | HTTP 服务必填，Streamable HTTP 地址。 |
+| `transport.headers` | HTTP 服务的可选静态请求头。 |
+| `logging.enable` | 是否写入文件日志，默认为 `false`。 |
+| `logging.path` | 日志文件路径；相对路径按配置文件目录解析。 |
 
-推荐流程：
+网关会监听配置文件变化。配置有误时不会替换当前配置，服务继续按最后一次有效配置运行。其他示例见 [config.example.json](./config.example.json)。
 
-1. 调用 `gateway_list_services`。
-2. 只对相关服务调用 `gateway_list_tools`，使用 `toolName` 和/或 `desc` 缩小范围。
-3. 复用 `includeSchema: true` 返回的 schema；已知准确名称时用 `gateway_get_tool_schema` 一次批量查询。
-4. 使用 `gateway_call_tool` 调用；`arguments` 始终必填，无参数工具传 `{}`。
+### 网关工具
 
-`gateway_call_tool` 不声明固定输出 schema，因为下游 `structuredContent` 可以是任意 JSON。MCP `2026-07-28` MRTR 结果和由 2025 表单 elicitation 转换出的 `input_required` 都不会被自动同意；上游必须声明表单 elicitation 支持，并使用匹配的 `inputResponses` 和 opaque `requestState` 重试。
+| 工具 | 说明 |
+| --- | --- |
+| `gateway_list_services` | 列出已配置的服务及其可用状态。 |
+| `gateway_get_service` | 查看服务连接状态、协议版本、服务端信息和最近一次错误。 |
+| `gateway_list_tools` | 按名称或描述搜索服务中的工具，可同时返回 schema。 |
+| `gateway_get_tool_schema` | 获取准确工具名称对应的 schema。 |
+| `gateway_manage_service` | 重连服务，或在配置文件中启用、禁用服务。 |
+| `gateway_call_tool` | 调用一个下游工具并返回 MCP 结果。 |
 
-## 客户端示例
+通常按 `gateway_list_services` → `gateway_list_tools` → 按需调用 `gateway_get_tool_schema` → `gateway_call_tool` 的顺序使用。下游工具没有参数时，`gateway_call_tool` 的 `arguments` 传 `{}`。
 
-stdio（Codex 风格 TOML）：
+工具调用会保留下游工具原有的副作用和确认规则。通过 `gateway_manage_service` 启用或禁用服务会修改配置文件。
 
-```toml
-[mcp_servers.gateway]
-command = "mcp-gateway-service"
-args = ["--config", "./config.json"]
-```
+支持 Skills 的 Agent 可以使用仓库内置的 [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) 完成工具发现和调用。
 
-Streamable HTTP：
-
-```toml
-[mcp_servers.gateway]
-url = "http://127.0.0.1:3100/mcp"
-```
-
-## 开发与验证
+## 开发
 
 ```bash
+git clone https://github.com/jadchene/mcp-gateway.git
+cd mcp-gateway
 npm install
 npm run verify
-node dist/index.js --config ./config.json --version
+npm run dev -- --config ./config.json
 ```
 
-仓库还包含公开 Skill：`skills/mcp-gateway/SKILL.md`。
+构建并运行编译产物：
 
-## License
+```bash
+npm run build
+npm start -- --config ./config.json
+```
 
-MIT. See [LICENSE](LICENSE).
+## 版权声明
+
+[MIT](./LICENSE)

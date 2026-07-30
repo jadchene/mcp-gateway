@@ -2,54 +2,105 @@ English | [简体中文](./README_zh.md)
 
 # MCP Gateway
 
-MCP Gateway is a token-efficient Model Context Protocol gateway. It exposes six stable routing tools instead of flattening every downstream tool into each client's startup context.
+## Introduction
 
-MCP Gateway v0.6.4 uses the official TypeScript SDK v2.
+MCP Gateway puts multiple MCP services behind one endpoint. An agent connects to the gateway and sees six routing tools; downstream services, tools, and schemas are looked up only when they are needed.
+
+The project uses the official TypeScript SDK v2 and requires Node.js 24 or later.
 
 > [!IMPORTANT]
-> MCP Gateway v0.6.2 and later accept only MCP `2026-07-28`, `2025-11-25`, and `2025-06-18`, using standard newline-delimited stdio or single-endpoint Streamable HTTP. Standalone HTTP+SSE (`/sse`), `Content-Length` framing, and other protocol revisions are not supported.
+> MCP Gateway v0.6.2 and later accept only MCP `2026-07-28`, `2025-11-25`, and `2025-06-18`. Supported transports are newline-delimited stdio and single-endpoint Streamable HTTP. Standalone HTTP+SSE (`/sse`), `Content-Length` framing, and other protocol revisions are not supported.
 
-## Capabilities
+## Why Use It
 
-- Inbound MCP server over stdio and stateless Streamable HTTP.
-- Outbound MCP client over standard stdio and Streamable HTTP.
-- Automatic negotiation among MCP `2026-07-28`, `2025-11-25`, and `2025-06-18`.
-- All three standard revisions are served automatically on inbound transports.
-- Full downstream tool metadata and JSON Schema 2020-12 preservation.
-- Form-mode elicitation bridging across all supported revisions, opaque `requestState` forwarding, arbitrary JSON `structuredContent`, cancellation, and `x-mcp-header` handling through the SDK.
-- SDK-managed response cache hints and client-local private caches.
-- Hot reload, lifecycle recovery, atomic invalid-config rejection, and optional file logging.
-- Host and Origin validation for inbound HTTP. Operational logs never use MCP stdout.
+- Keep the agent context small even when many MCP services are configured.
+- Connect the agent once, then add or remove downstream services in the gateway config.
+- Find tools by name or description and load schemas only when required.
+- Use stdio and Streamable HTTP services through the same interface.
+- Reload config changes without restarting the gateway.
 
-## Requirements and Installation
+## Quick Start
 
-- Node.js 24 or later.
+### Install
 
 ```bash
 npm install -g @jadchene/mcp-gateway-service
-cp config.example.json config.json
-mcp-gateway-service --config ./config.json
 ```
 
-Enable the additional inbound HTTP endpoint:
+Create `config.json`. Replace `your-mcp-service` with the command of an installed MCP server:
+
+```json
+{
+  "services": [
+    {
+      "serviceId": "tools",
+      "name": "Tools",
+      "transport": {
+        "type": "stdio",
+        "command": "your-mcp-service"
+      }
+    }
+  ]
+}
+```
+
+### Stdio
+
+The agent starts the gateway process, so no separate startup command is needed.
+
+Codex `config.toml`:
+
+```toml
+[mcp_servers.gateway]
+command = "mcp-gateway-service"
+args = ["--config", "./config.json"]
+```
+
+Claude Code:
 
 ```bash
-mcp-gateway-service --config ./config.json --http --host 127.0.0.1 --port 3100 --path /mcp
+claude mcp add gateway -- mcp-gateway-service --config ./config.json
 ```
 
-When HTTP is enabled, the process serves both stdio and HTTP. Use `--version` or `-v` to print the installed version.
+### Streamable HTTP
 
-## Protocol Negotiation
+Start the gateway:
 
-Protocol selection is automatic. The gateway and its downstream clients prefer MCP `2026-07-28`, then negotiate `2025-11-25` or `2025-06-18` when required by the peer. These are the only accepted protocol revisions. Inbound Streamable HTTP response shaping is selected automatically by the official SDK.
+```bash
+mcp-gateway-service --http --config ./config.json
+```
 
-Form-mode elicitation works across all three revisions. A 2025 downstream `elicitation/create` request is forwarded directly to a 2025 upstream client; for a 2026 upstream client, it is converted into `input_required` and resumed with the returned opaque `requestState` and `inputResponses`. Tool calls on each 2025 downstream connection are serialized so form responses cannot cross between calls.
+The default endpoint is `http://127.0.0.1:3000/mcp`.
 
-For MCP `2025-11-25`, the gateway negotiates only capabilities it implements. Experimental Tasks, URL-mode elicitation, and sampling tool calls are not advertised.
+Codex `config.toml`:
 
-## Service Configuration
+```toml
+[mcp_servers.gateway]
+url = "http://127.0.0.1:3000/mcp"
+```
 
-Pass `--config`, set `MCP_GATEWAY_CONFIG`, or place `config.json` in the current directory.
+Claude Code:
+
+```bash
+claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
+```
+
+## Configuration and Tools
+
+### CLI Options
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--config <path>` | Config file path. | `MCP_GATEWAY_CONFIG`, then `./config.json` |
+| `--http` | Enables the Streamable HTTP endpoint. | Disabled |
+| `--host <host>` | HTTP bind address. | `127.0.0.1` |
+| `--port <port>` | HTTP port. | `3000` |
+| `--path <path>` | HTTP endpoint path. | `/mcp` |
+| `--version`, `-v` | Prints the installed version. | — |
+
+Stdio remains available when `--http` is enabled.
+
+### Config File
 
 ```json
 {
@@ -60,94 +111,78 @@ Pass `--config`, set `MCP_GATEWAY_CONFIG`, or place `config.json` in the current
   "services": [
     {
       "serviceId": "local-tools",
-      "enable": true,
       "name": "Local Tools",
       "transport": {
         "type": "stdio",
-        "command": "node",
-        "args": ["./server.js"]
+        "command": "your-mcp-service",
+        "args": []
       }
     },
     {
       "serviceId": "remote-tools",
-      "enable": true,
       "name": "Remote Tools",
       "transport": {
         "type": "http",
-        "url": "http://127.0.0.1:3200/mcp",
-        "headers": {
-          "Authorization": "Bearer example-token"
-        }
+        "url": "http://127.0.0.1:3200/mcp"
       }
     }
   ]
 }
 ```
 
-Common fields:
-
-- `enable` defaults to `true`.
-- `logging.enable` defaults to `false`. A relative log path is resolved from the config file directory.
-- Stdio always uses the standard newline-delimited JSON-RPC transport.
-- HTTP always uses the standard single-endpoint Streamable HTTP transport.
-- Protocol revision negotiation is automatic and has no configuration switch.
-- Static HTTP headers are supported. Header values and environment secrets are not written to logs.
-
-## Inbound Streamable HTTP
-
-MCP `2026-07-28` HTTP is stateless: each request is an independent `POST /mcp`. The gateway does not create `Mcp-Session-Id` sessions, and `GET`/`DELETE` return `405`. The SDK validates `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, request metadata, and protocol errors.
-
-The same endpoint serves MCP `2025-11-25` and `2025-06-18` through their standard stateless Streamable HTTP form. As a downstream client, the gateway preserves a session for either revision when a server issues `Mcp-Session-Id`.
-
-The default bind address is `127.0.0.1`. Host and Origin checks protect the local endpoint from DNS rebinding. Do not expose it beyond a trusted local network without an authentication layer.
-
-## Gateway Tools
-
-| Tool | Purpose |
+| Field | Description |
 | --- | --- |
-| `gateway_list_services` | List configured downstream services and availability. |
-| `gateway_get_service` | Inspect one service's status, protocol version, and server identity. |
-| `gateway_list_tools` | Search tool names/descriptions; optionally include schemas. |
-| `gateway_get_tool_schema` | Fetch schemas for exact, case-sensitive tool names in one batch. |
-| `gateway_manage_service` | Reconnect or persistently enable/disable one configured service. |
-| `gateway_call_tool` | Call one downstream tool and preserve its MCP result. |
+| `services` | List of downstream MCP services. |
+| `serviceId` | Required unique identifier used by gateway tools. |
+| `name` | Required display name. |
+| `description` | Optional service description. |
+| `enable` | Optional; defaults to `true`. |
+| `transport.type` | `stdio` or `http`. |
+| `transport.command` | Required command for a stdio service. |
+| `transport.args` | Optional command arguments for a stdio service. |
+| `transport.cwd` | Optional working directory for a stdio service. |
+| `transport.env` | Optional environment variables for a stdio service. |
+| `transport.url` | Required Streamable HTTP URL for an HTTP service. |
+| `transport.headers` | Optional static headers for an HTTP service. |
+| `logging.enable` | Enables file logging; defaults to `false`. |
+| `logging.path` | Log file path. Relative paths use the config file directory. |
 
-Recommended flow:
+The config file is watched for changes. Invalid updates are rejected and the last valid config stays active. See [config.example.json](./config.example.json) for another example.
 
-1. Call `gateway_list_services`.
-2. Call `gateway_list_tools` only for the relevant service, using `toolName` and/or `desc` filters.
-3. Reuse schemas returned by `includeSchema: true`, or batch exact names with `gateway_get_tool_schema`.
-4. Call `gateway_call_tool`; always provide `arguments`, using `{}` for a no-argument tool.
+### Gateway Tools
 
-`gateway_call_tool` intentionally has no fixed output schema because downstream `structuredContent` may be any JSON value. MCP `2026-07-28` MRTR results and bridged 2025 form elicitation are returned as `input_required` without automatic approval; the upstream client must declare form elicitation support and retry with matching `inputResponses` and the opaque `requestState`.
+| Tool | Description |
+| --- | --- |
+| `gateway_list_services` | Lists configured services and their availability. |
+| `gateway_get_service` | Shows one service's connection state, protocol revision, server identity, and recent error. |
+| `gateway_list_tools` | Searches a service's tools by name or description and can include schemas. |
+| `gateway_get_tool_schema` | Returns schemas for exact tool names. |
+| `gateway_manage_service` | Reconnects a service or enables/disables it in the config file. |
+| `gateway_call_tool` | Calls one downstream tool and returns its MCP result. |
 
-## Client Examples
+The usual flow is `gateway_list_services` → `gateway_list_tools` → `gateway_get_tool_schema` when needed → `gateway_call_tool`. Pass `{}` to `gateway_call_tool` when the downstream tool has no arguments.
 
-Stdio (Codex-style TOML):
+Calls keep the downstream tool's original side effects and confirmation rules. Enabling or disabling a service with `gateway_manage_service` updates the config file.
 
-```toml
-[mcp_servers.gateway]
-command = "mcp-gateway-service"
-args = ["--config", "./config.json"]
-```
+Agents with Skills support can use the included [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) for the discovery and calling workflow.
 
-Streamable HTTP:
-
-```toml
-[mcp_servers.gateway]
-url = "http://127.0.0.1:3100/mcp"
-```
-
-## Development and Verification
+## Development
 
 ```bash
+git clone https://github.com/jadchene/mcp-gateway.git
+cd mcp-gateway
 npm install
 npm run verify
-node dist/index.js --config ./config.json --version
+npm run dev -- --config ./config.json
 ```
 
-The repository also ships the public skill at `skills/mcp-gateway/SKILL.md`.
+Build and run the compiled service:
+
+```bash
+npm run build
+npm start -- --config ./config.json
+```
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](./LICENSE)
