@@ -101,17 +101,149 @@ for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
   });
 }
 
-test("gateway proxies a modern upstream call to an MCP 2025-11-25 downstream service", async () => {
+test("gateway proxies a modern upstream call to an MCP 2025-11-25 stdio service", async () => {
   await withProxy(async ({ client }) => {
     const result = await client.callTool({
       name: "gateway_call_tool",
       arguments: {
         serviceId: "downstream",
-        toolName: "arbitrary_json",
-        arguments: {}
+        toolName: "mcp_2025_echo",
+        arguments: { message: "legacy-stdio" }
       }
     });
-    assert.deepEqual(result.structuredContent, [1, true, null, { nested: "value" }]);
+    assert.deepEqual(result.structuredContent, { echoed: "legacy-stdio" });
+  }, () => undefined, "2025-11-25");
+});
+
+for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
+  test(`gateway converts MCP ${protocolVersion} downstream form elicitation for a modern upstream client`, async () => {
+    const operation = `${protocolVersion}-modern-upstream`;
+    await withProxy(async ({ client }) => {
+      const first = await callGatewayConfirmation(client, operation);
+      assert.equal(isInputRequiredResult(first), true);
+      const inputRequiredResult = first as InputRequiredResult;
+      assert.ok(inputRequiredResult.requestState);
+      assert.match(inputRequiredResult.requestState, /^mcp-gateway-form-elicitation-v1\./);
+      assert.equal(inputRequiredResult.inputRequests?.form?.method, "elicitation/create");
+      assert.equal(
+        (inputRequiredResult.inputRequests?.form?.params as { message?: string } | undefined)?.message,
+        `Confirm ${operation}`
+      );
+
+      const second = await callGatewayConfirmation(client, operation, {
+        requestState: inputRequiredResult.requestState,
+        inputResponses: {
+          form: {
+            action: "accept",
+            content: { confirmed: true }
+          }
+        }
+      });
+      assert.equal(isInputRequiredResult(second), false);
+      assert.deepEqual((second as CallToolResult).structuredContent, {
+        operation,
+        confirmed: true,
+        state: "stdio-downstream-state-v1"
+      });
+    }, () => undefined, protocolVersion);
+  });
+
+  test(`MCP ${protocolVersion} upstream form elicitation is forwarded directly to a matching downstream service`, async () => {
+    const operation = `${protocolVersion}-direct`;
+    await withLegacyInMemoryProxy(async ({ client }) => {
+      const result = await client.callTool({
+        name: "gateway_call_tool",
+        arguments: {
+          serviceId: "downstream",
+          toolName: "mcp_2025_confirm",
+          arguments: { operation }
+        }
+      });
+      assert.notEqual(result.isError, true, JSON.stringify(result));
+      assert.deepEqual(result.structuredContent, {
+        operation,
+        confirmed: true,
+        state: "stdio-downstream-state-v1"
+      });
+    }, protocolVersion, protocolVersion);
+  });
+}
+
+test("gateway serializes overlapping modern calls while an MCP 2025 downstream form is parked", async () => {
+  await withProxy(async ({ client }) => {
+    const first = await callGatewayConfirmation(client, "first");
+    assert.equal(isInputRequiredResult(first), true);
+    const firstInput = first as InputRequiredResult;
+    assert.ok(firstInput.requestState);
+
+    let secondSettled = false;
+    const secondPending = callGatewayConfirmation(client, "second").finally(() => {
+      secondSettled = true;
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+    assert.equal(secondSettled, false);
+
+    const firstCompleted = await callGatewayConfirmation(client, "first", {
+      requestState: firstInput.requestState,
+      inputResponses: {
+        form: { action: "accept", content: { confirmed: true } }
+      }
+    });
+    assert.deepEqual((firstCompleted as CallToolResult).structuredContent, {
+      operation: "first",
+      confirmed: true,
+      state: "stdio-downstream-state-v1"
+    });
+
+    const second = await secondPending;
+    assert.equal(isInputRequiredResult(second), true);
+    const secondInput = second as InputRequiredResult;
+    assert.ok(secondInput.requestState);
+    assert.notEqual(secondInput.requestState, firstInput.requestState);
+    const secondCompleted = await callGatewayConfirmation(client, "second", {
+      requestState: secondInput.requestState,
+      inputResponses: {
+        form: { action: "accept", content: { confirmed: false } }
+      }
+    });
+    assert.deepEqual((secondCompleted as CallToolResult).structuredContent, {
+      operation: "second",
+      confirmed: false,
+      state: "stdio-downstream-state-v1"
+    });
+  }, () => undefined, "2025-11-25");
+});
+
+test("gateway rejects a mismatched MCP 2025 form continuation without losing the parked call", async () => {
+  await withProxy(async ({ client }) => {
+    const first = await callGatewayConfirmation(client, "original");
+    assert.equal(isInputRequiredResult(first), true);
+    const inputRequiredResult = first as InputRequiredResult;
+    assert.ok(inputRequiredResult.requestState);
+
+    const mismatch = await callGatewayConfirmation(client, "different", {
+      requestState: inputRequiredResult.requestState,
+      inputResponses: {
+        form: { action: "accept", content: { confirmed: true } }
+      }
+    });
+    assert.equal((mismatch as CallToolResult).isError, true);
+    assert.match(
+      (mismatch as CallToolResult).content.find((item) => item.type === "text")?.text ?? "",
+      /does not match the original downstream tool call/
+    );
+
+    const completed = await callGatewayConfirmation(client, "original", {
+      requestState: inputRequiredResult.requestState,
+      inputResponses: {
+        form: { action: "accept", content: { confirmed: true } }
+      }
+    });
+    assert.deepEqual((completed as CallToolResult).structuredContent, {
+      operation: "original",
+      confirmed: true,
+      state: "stdio-downstream-state-v1"
+    });
   }, () => undefined, "2025-11-25");
 });
 
@@ -206,9 +338,11 @@ test("gateway propagates upstream cancellation to the active downstream HTTP cal
 async function withProxy(
   assertion: (context: { client: Client; gatewayUrl: string }) => Promise<void>,
   onDownstreamCancelled: (cancelled: boolean) => void = () => undefined,
-  downstreamProtocolVersion: "2026-07-28" | "2025-11-25" = "2026-07-28"
+  downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28"
 ): Promise<void> {
-  const downstream = await startDownstream(onDownstreamCancelled, downstreamProtocolVersion);
+  const downstream = downstreamProtocolVersion === "2026-07-28"
+    ? await startDownstream(onDownstreamCancelled)
+    : null;
   const tempDirectory = await mkdtemp(join(tmpdir(), "mcp-gateway-proxy-"));
   const configPath = join(tempDirectory, "config.json");
   await writeFile(configPath, JSON.stringify({
@@ -216,10 +350,12 @@ async function withProxy(
       {
         serviceId: "downstream",
         name: "Downstream",
-        transport: {
-          type: "http",
-          url: downstream.url
-        }
+        transport: downstream
+          ? {
+              type: "http",
+              url: downstream.url
+            }
+          : createLegacyStdioTransport(downstreamProtocolVersion)
       }
     ]
   }), "utf8");
@@ -249,16 +385,19 @@ async function withProxy(
     await client.close().catch(() => undefined);
     await gateway.stop();
     await registry.dispose();
-    await downstream.close();
+    await downstream?.close();
     await rm(tempDirectory, { recursive: true, force: true });
   }
 }
 
 async function withLegacyInMemoryProxy(
   assertion: (context: { client: Client }) => Promise<void>,
-  protocolVersion: "2025-11-25" | "2025-06-18"
+  protocolVersion: "2025-11-25" | "2025-06-18",
+  downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28"
 ): Promise<void> {
-  const downstream = await startDownstream(() => undefined);
+  const downstream = downstreamProtocolVersion === "2026-07-28"
+    ? await startDownstream(() => undefined)
+    : null;
   const tempDirectory = await mkdtemp(join(tmpdir(), "mcp-gateway-legacy-proxy-"));
   const configPath = join(tempDirectory, "config.json");
   await writeFile(configPath, JSON.stringify({
@@ -266,10 +405,12 @@ async function withLegacyInMemoryProxy(
       {
         serviceId: "downstream",
         name: "Downstream",
-        transport: {
-          type: "http",
-          url: downstream.url
-        }
+        transport: downstream
+          ? {
+              type: "http",
+              url: downstream.url
+            }
+          : createLegacyStdioTransport(downstreamProtocolVersion)
       }
     ]
   }), "utf8");
@@ -296,15 +437,15 @@ async function withLegacyInMemoryProxy(
     await client.close().catch(() => undefined);
     await gatewayServer.close().catch(() => undefined);
     await registry.dispose();
-    await downstream.close();
+    await downstream?.close();
     await rm(tempDirectory, { recursive: true, force: true });
   }
 }
 
 async function startDownstream(
-  onCancelled: (cancelled: boolean) => void,
-  protocolVersion: "2026-07-28" | "2025-11-25" = "2026-07-28"
+  onCancelled: (cancelled: boolean) => void
 ): Promise<{ url: string; close: () => Promise<void> }> {
+  const protocolVersion = "2026-07-28" as const;
   const handler = createMcpHandler(() => {
     const server = new McpServer(
       { name: "proxy-downstream", version: "1.0.0" },
@@ -385,9 +526,7 @@ async function startDownstream(
       return { content: [{ type: "text", text: "cancelled" }] };
     });
     return server;
-  }, protocolVersion === "2026-07-28"
-    ? { legacy: "reject", responseMode: "sse" }
-    : { legacy: "stateless" });
+  }, { legacy: "reject", responseMode: "sse" });
   const nodeHandler = toNodeHandler(handler);
   const server = http.createServer((request, response) => void nodeHandler(request, response));
   await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
@@ -406,6 +545,43 @@ async function startDownstream(
       });
     }
   };
+}
+
+function createLegacyStdioTransport(
+  protocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18"
+): Record<string, unknown> {
+  if (protocolVersion === "2026-07-28") {
+    throw new Error("A modern downstream fixture must use HTTP.");
+  }
+  return {
+    type: "stdio",
+    command: process.execPath,
+    args: ["--experimental-strip-types", "test/fixtures/mcp-2025-stdio-service.ts"],
+    cwd: process.cwd(),
+    env: {
+      MCP_TEST_PROTOCOL_VERSION: protocolVersion
+    }
+  };
+}
+
+async function callGatewayConfirmation(
+  client: Client,
+  operation: string,
+  continuation: {
+    requestState?: string;
+    inputResponses?: Record<string, unknown>;
+  } = {}
+): Promise<CallToolResult | InputRequiredResult> {
+  const params = {
+    name: "gateway_call_tool",
+    arguments: {
+      serviceId: "downstream",
+      toolName: "mcp_2025_confirm",
+      arguments: { operation }
+    },
+    ...continuation
+  } as unknown as CallToolRequestParams;
+  return client.callTool(params, { allowInputRequired: true }) as Promise<CallToolResult | InputRequiredResult>;
 }
 
 async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<void> {

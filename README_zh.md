@@ -4,7 +4,7 @@
 
 MCP Gateway 是一个节省 token 的 Model Context Protocol 网关。它不把所有下游工具展开到每个客户端的启动上下文，而是通过 6 个稳定工具完成发现、管理和转发。
 
-MCP Gateway v0.6.2 使用官方 TypeScript SDK v2。
+MCP Gateway v0.6.3 使用官方 TypeScript SDK v2。
 
 > [!IMPORTANT]
 > MCP Gateway v0.6.2 及后续版本仅接受 MCP `2026-07-28`、`2025-11-25` 和 `2025-06-18`，传输方式仅支持标准换行分隔 stdio 和单端点 Streamable HTTP。不支持独立 HTTP+SSE（`/sse`）、`Content-Length` framing 和其他协议版本。
@@ -16,7 +16,7 @@ MCP Gateway v0.6.2 使用官方 TypeScript SDK v2。
 - 在 MCP `2026-07-28`、`2025-11-25` 与 `2025-06-18` 之间自动协商。
 - 入站传输自动服务这三个标准版本。
 - 完整转发下游工具元数据和 JSON Schema 2020-12。
-- 由 SDK 处理 MRTR elicitation、opaque `requestState`、任意 JSON `structuredContent`、取消传播和 `x-mcp-header`。
+- 在全部受支持版本间桥接表单模式 elicitation，并由 SDK 处理 opaque `requestState`、任意 JSON `structuredContent`、取消传播和 `x-mcp-header`。
 - 遵守 SDK 缓存提示，private 缓存按客户端实例隔离。
 - 支持配置热更新、生命周期恢复、无效配置原子拒绝和可选文件日志。
 - 入站 HTTP 校验 Host 和 Origin；运行日志不会写入 MCP stdout。
@@ -42,6 +42,8 @@ mcp-gateway-service --config ./config.json --http --host 127.0.0.1 --port 3100 -
 ## 协议协商
 
 协议选择完全自动：网关及其下游客户端优先协商 MCP `2026-07-28`，并根据对端能力协商 `2025-11-25` 或 `2025-06-18`。只接受这三个协议版本。入站 Streamable HTTP 的响应形态由官方 SDK 自动选择。
+
+三个协议版本都支持表单模式 elicitation。2025 下游发出的 `elicitation/create` 会直接转发给 2025 上游客户端；面对 2026 上游客户端时，网关会将其转换为 `input_required`，再使用返回的 opaque `requestState` 和 `inputResponses` 续调。每个 2025 下游连接上的工具调用会串行执行，避免表单响应串到其他调用。
 
 对于 MCP `2025-11-25`，网关只协商已实现的能力，不声明实验性 Tasks、URL 模式 elicitation 和 sampling 工具调用。
 
@@ -117,7 +119,7 @@ MCP `2026-07-28` HTTP 是无状态的：每个请求都是独立的 `POST /mcp`�
 3. 复用 `includeSchema: true` 返回的 schema；已知准确名称时用 `gateway_get_tool_schema` 一次批量查询。
 4. 使用 `gateway_call_tool` 调用；`arguments` 始终必填，无参数工具传 `{}`。
 
-`gateway_call_tool` 不声明固定输出 schema，因为下游 `structuredContent` 可以是任意 JSON。MCP `2026-07-28` MRTR 的 `input_required` 不会被自动同意；上游必须声明所需能力，并使用 `inputResponses` 和 opaque `requestState` 重试。
+`gateway_call_tool` 不声明固定输出 schema，因为下游 `structuredContent` 可以是任意 JSON。MCP `2026-07-28` MRTR 结果和由 2025 表单 elicitation 转换出的 `input_required` 都不会被自动同意；上游必须声明表单 elicitation 支持，并使用匹配的 `inputResponses` 和 opaque `requestState` 重试。
 
 ## 客户端示例
 

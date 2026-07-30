@@ -3,6 +3,7 @@ import {
   McpServer,
   fromJsonSchema,
   type CallToolResult,
+  type ElicitRequestFormParams,
   type InputRequiredResult,
   type JsonSchemaType,
   type ServerContext,
@@ -83,7 +84,15 @@ function toDownstreamContext(
     signal: context.mcpReq.signal,
     ...(clientCapabilities ? { clientCapabilities } : {}),
     ...(context.mcpReq.inputResponses ? { inputResponses: context.mcpReq.inputResponses } : {}),
-    ...(context.mcpReq.requestState<string>() ? { requestState: context.mcpReq.requestState<string>() } : {})
+    ...(context.mcpReq.requestState<string>() ? { requestState: context.mcpReq.requestState<string>() } : {}),
+    ...(!context.mcpReq.envelope
+      ? {
+          elicitForm: (params: ElicitRequestFormParams, signal: AbortSignal) => context.mcpReq.elicitInput(
+            params,
+            { signal }
+          )
+        }
+      : {})
   };
 }
 

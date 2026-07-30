@@ -5,6 +5,7 @@ import {
   type CallToolRequestParams,
   type CallToolResult,
   type ClientOptions,
+  type ElicitRequestFormParams,
   type InputRequiredResult,
   type Tool,
   type Transport
@@ -13,6 +14,7 @@ import { Logger } from "../logger.ts";
 import type { ServiceConfig, ServiceMetadata, ToolDefinition } from "../types.ts";
 import { VERSION } from "../version.ts";
 import type { DownstreamCallContext, McpClient } from "./client-types.ts";
+import { FormElicitationBridge } from "./form-elicitation-bridge.ts";
 import { SUPPORTED_MCP_PROTOCOL_VERSIONS } from "./versions.ts";
 
 const MAX_RESTART_ATTEMPTS = 3;
@@ -40,6 +42,7 @@ export class SdkMcpClient implements McpClient {
   private restartAttempts = 0;
   private unavailableReason: string | null = null;
   private tools = new Map<string, Tool>();
+  private readonly formElicitationBridge = new FormElicitationBridge();
 
   /**
    * Creates a reusable SDK-backed downstream client.
@@ -154,11 +157,18 @@ export class SdkMcpClient implements McpClient {
         ...(context.inputResponses ? { inputResponses: context.inputResponses } : {}),
         ...(context.requestState ? { requestState: context.requestState } : {})
       };
-      const result = await client.callTool(params, {
-        signal: context.signal,
-        allowInputRequired: true,
-        toolDefinition: this.tools.get(name)
-      });
+      const invoke = async (signal: AbortSignal): Promise<CallToolResult | InputRequiredResult> => {
+        const result = await client.callTool(params, {
+          signal,
+          allowInputRequired: true,
+          toolDefinition: this.tools.get(name)
+        });
+        return result as CallToolResult | InputRequiredResult;
+      };
+      if (client.getProtocolEra() === "legacy") {
+        return this.formElicitationBridge.execute(name, args, context, invoke);
+      }
+      const result = await invoke(context.signal ?? new AbortController().signal);
       return result as CallToolResult | InputRequiredResult;
     });
   }
@@ -193,6 +203,10 @@ export class SdkMcpClient implements McpClient {
       }
     };
     const client = new Client({ name: "mcp-gateway", version: VERSION }, options);
+    client.setRequestHandler("elicitation/create", async (request, context) => {
+      const params = request.params as ElicitRequestFormParams;
+      return this.formElicitationBridge.handle(params, context.mcpReq.signal);
+    });
     client.onerror = (error) => {
       this.logger.warn("downstream.sdk_error", {
         serviceId: this.key,
@@ -269,6 +283,7 @@ export class SdkMcpClient implements McpClient {
    * Closes the active SDK connection and clears derived tool views.
    */
   private async disposeConnection(): Promise<void> {
+    this.formElicitationBridge.reset(new Error(`Downstream service '${this.key}' connection was closed.`));
     const client = this.client;
     this.client = null;
     this.tools.clear();

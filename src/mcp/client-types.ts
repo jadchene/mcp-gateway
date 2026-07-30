@@ -1,4 +1,9 @@
-import type { CallToolResult, InputRequiredResult } from "@modelcontextprotocol/client";
+import type {
+  CallToolResult,
+  ElicitRequestFormParams,
+  ElicitResult,
+  InputRequiredResult
+} from "@modelcontextprotocol/client";
 import type { ServiceConfig, ServiceMetadata, ToolDefinition } from "../types.ts";
 
 /**
@@ -21,6 +26,10 @@ export interface DownstreamCallContext {
    * Carries opaque MRTR state from the preceding downstream result.
    */
   requestState?: string;
+  /**
+   * Forwards a 2025-era downstream form request to a 2025-era upstream client.
+   */
+  elicitForm?: (params: ElicitRequestFormParams, signal: AbortSignal) => Promise<ElicitResult>;
 }
 
 /**

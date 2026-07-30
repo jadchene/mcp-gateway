@@ -3,7 +3,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { Client } from "@modelcontextprotocol/client";
+import {
+  Client,
+  isInputRequiredResult,
+  type CallToolResult,
+  type InputRequiredResult
+} from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Logger } from "../src/logger.ts";
 import { StdioMcpClient } from "../src/mcp/client.ts";
@@ -55,9 +60,36 @@ for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
       const metadata = await client.getMetadata();
       assert.equal(metadata.protocolEra, "legacy");
       assert.equal(metadata.protocolVersion, protocolVersion);
-      assert.equal(metadata.tools[0]?.name, "mcp_2025_echo");
+      assert.deepEqual(metadata.tools.map((tool) => tool.name), ["mcp_2025_echo", "mcp_2025_confirm"]);
       const result = await client.callTool("mcp_2025_echo", { message: protocolVersion });
       assert.deepEqual(result.structuredContent, { echoed: protocolVersion });
+
+      const first = await client.callTool("mcp_2025_confirm", { operation: protocolVersion });
+      assert.equal(isInputRequiredResult(first), true);
+      const inputRequiredResult = first as InputRequiredResult;
+      assert.ok(inputRequiredResult.requestState);
+      assert.match(inputRequiredResult.requestState, /^mcp-gateway-form-elicitation-v1\./);
+      assert.equal(inputRequiredResult.inputRequests?.form?.method, "elicitation/create");
+
+      const second = await client.callTool(
+        "mcp_2025_confirm",
+        { operation: protocolVersion },
+        {
+          requestState: inputRequiredResult.requestState,
+          inputResponses: {
+            form: {
+              action: "accept",
+              content: { confirmed: true }
+            }
+          }
+        }
+      ) as CallToolResult | InputRequiredResult;
+      assert.equal(isInputRequiredResult(second), false);
+      assert.deepEqual((second as CallToolResult).structuredContent, {
+        operation: protocolVersion,
+        confirmed: true,
+        state: "stdio-downstream-state-v1"
+      });
     } finally {
       await client.dispose();
     }

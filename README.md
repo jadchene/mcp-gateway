@@ -4,7 +4,7 @@ English | [简体中文](./README_zh.md)
 
 MCP Gateway is a token-efficient Model Context Protocol gateway. It exposes six stable routing tools instead of flattening every downstream tool into each client's startup context.
 
-MCP Gateway v0.6.2 uses the official TypeScript SDK v2.
+MCP Gateway v0.6.3 uses the official TypeScript SDK v2.
 
 > [!IMPORTANT]
 > MCP Gateway v0.6.2 and later accept only MCP `2026-07-28`, `2025-11-25`, and `2025-06-18`, using standard newline-delimited stdio or single-endpoint Streamable HTTP. Standalone HTTP+SSE (`/sse`), `Content-Length` framing, and other protocol revisions are not supported.
@@ -16,7 +16,7 @@ MCP Gateway v0.6.2 uses the official TypeScript SDK v2.
 - Automatic negotiation among MCP `2026-07-28`, `2025-11-25`, and `2025-06-18`.
 - All three standard revisions are served automatically on inbound transports.
 - Full downstream tool metadata and JSON Schema 2020-12 preservation.
-- MRTR elicitation forwarding, opaque `requestState` forwarding, arbitrary JSON `structuredContent`, cancellation, and `x-mcp-header` handling through the SDK.
+- Form-mode elicitation bridging across all supported revisions, opaque `requestState` forwarding, arbitrary JSON `structuredContent`, cancellation, and `x-mcp-header` handling through the SDK.
 - SDK-managed response cache hints and client-local private caches.
 - Hot reload, lifecycle recovery, atomic invalid-config rejection, and optional file logging.
 - Host and Origin validation for inbound HTTP. Operational logs never use MCP stdout.
@@ -42,6 +42,8 @@ When HTTP is enabled, the process serves both stdio and HTTP. Use `--version` or
 ## Protocol Negotiation
 
 Protocol selection is automatic. The gateway and its downstream clients prefer MCP `2026-07-28`, then negotiate `2025-11-25` or `2025-06-18` when required by the peer. These are the only accepted protocol revisions. Inbound Streamable HTTP response shaping is selected automatically by the official SDK.
+
+Form-mode elicitation works across all three revisions. A 2025 downstream `elicitation/create` request is forwarded directly to a 2025 upstream client; for a 2026 upstream client, it is converted into `input_required` and resumed with the returned opaque `requestState` and `inputResponses`. Tool calls on each 2025 downstream connection are serialized so form responses cannot cross between calls.
 
 For MCP `2025-11-25`, the gateway negotiates only capabilities it implements. Experimental Tasks, URL-mode elicitation, and sampling tool calls are not advertised.
 
@@ -117,7 +119,7 @@ Recommended flow:
 3. Reuse schemas returned by `includeSchema: true`, or batch exact names with `gateway_get_tool_schema`.
 4. Call `gateway_call_tool`; always provide `arguments`, using `{}` for a no-argument tool.
 
-`gateway_call_tool` intentionally has no fixed output schema because downstream `structuredContent` may be any JSON value. MCP `2026-07-28` MRTR `input_required` results are forwarded without automatic approval; the upstream client must declare the required capability and retry with `inputResponses` and the opaque `requestState`.
+`gateway_call_tool` intentionally has no fixed output schema because downstream `structuredContent` may be any JSON value. MCP `2026-07-28` MRTR results and bridged 2025 form elicitation are returned as `input_required` without automatic approval; the upstream client must declare form elicitation support and retry with matching `inputResponses` and the opaque `requestState`.
 
 ## Client Examples
 

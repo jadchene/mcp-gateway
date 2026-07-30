@@ -52,7 +52,7 @@ Operate downstream MCP services through the gateway's fixed, token-efficient dis
 - `includeSchema` is optional and defaults to `false`. Keep it false for name-only discovery or broad unfiltered inventories.
 - `gateway_get_tool_schema` requires unique exact, case-sensitive names in `toolName` and returns `schemas`, keyed by requested tool name; each value contains `inputSchema` and `outputSchema`.
 - Stable gateway-owned structured results expose `outputSchema`; `gateway_call_tool` omits a fixed output schema and forwards the downstream result unchanged.
-- `gateway_call_tool` may return an MCP `input_required` continuation. Never auto-approve it; obtain the required user input and retry with the returned opaque `requestState` and matching `inputResponses`.
+- `gateway_call_tool` may return an MCP `input_required` continuation, including one converted from a 2025 downstream form elicitation. Never auto-approve it; obtain the required user input and retry with the returned opaque `requestState` and matching `inputResponses`.
 - Treat downstream `structuredContent` as arbitrary JSON rather than assuming it is an object.
 
 ## Token-Efficient Strategy
