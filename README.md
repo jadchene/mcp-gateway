@@ -4,7 +4,7 @@ English | [简体中文](./README_zh.md)
 
 MCP Gateway is a token-efficient Model Context Protocol gateway. It exposes six stable routing tools instead of flattening every downstream tool into each client's startup context.
 
-MCP Gateway v0.6.3 uses the official TypeScript SDK v2.
+MCP Gateway v0.6.4 uses the official TypeScript SDK v2.
 
 > [!IMPORTANT]
 > MCP Gateway v0.6.2 and later accept only MCP `2026-07-28`, `2025-11-25`, and `2025-06-18`, using standard newline-delimited stdio or single-endpoint Streamable HTTP. Standalone HTTP+SSE (`/sse`), `Content-Length` framing, and other protocol revisions are not supported.

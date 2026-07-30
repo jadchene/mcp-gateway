@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Logger } from "../logger.ts";
 import type { ServiceConfig, StdioTransportConfig } from "../types.ts";
@@ -56,12 +57,27 @@ function createStandardTransport(
 /**
  * Resolves a configured command into a directly spawnable executable on Windows.
  */
-function resolveCommandSpec(command: string, args: string[]): { command: string; args: string[] } {
+export function resolveCommandSpec(command: string, args: string[]): { command: string; args: string[] } {
   if (process.platform !== "win32" || /[\\/]/.test(command) || /\.[A-Za-z0-9]+$/.test(command)) {
     return { command, args };
   }
 
-  const resolved = resolveViaPowerShell(command) ?? resolveViaWhere(command);
+  const candidates = resolveViaWhere(command);
+  const native = candidates.find((candidate) => /\.(?:com|exe)$/i.test(candidate));
+  if (native) {
+    return { command: native, args };
+  }
+
+  const commandShim = candidates.find((candidate) => candidate.toLowerCase().endsWith(".cmd"));
+  const nodeExecutable = resolveViaWhere("node.exe").find((candidate) => candidate.toLowerCase().endsWith("node.exe"));
+  if (commandShim && nodeExecutable) {
+    const npmLaunch = resolveWindowsNpmShim(commandShim, nodeExecutable, args);
+    if (npmLaunch) {
+      return npmLaunch;
+    }
+  }
+
+  const resolved = resolveViaPowerShell(command);
   if (!resolved) {
     return { command, args };
   }
@@ -70,6 +86,34 @@ function resolveCommandSpec(command: string, args: string[]): { command: string;
     return host ? { command: host, args: ["-File", resolved, ...args] } : { command, args };
   }
   return { command: resolved, args };
+}
+
+/**
+ * Converts a standard Windows npm command shim into a directly managed Node.js process.
+ */
+export function resolveWindowsNpmShim(
+  shimPath: string,
+  nodeExecutable: string,
+  args: string[]
+): { command: string; args: string[] } | null {
+  try {
+    const base = dirname(shimPath);
+    const content = readFileSync(shimPath, "utf8");
+    const matches = Array.from(content.matchAll(/"%dp0%\\([^"\r\n]+\.js)"/gi));
+    const relativeScript = matches.at(-1)?.[1];
+    if (!relativeScript) {
+      return null;
+    }
+
+    const script = resolve(base, relativeScript.replace(/\\/g, "/"));
+    const relativePath = relative(base, script);
+    if (relativePath.startsWith("..") || isAbsolute(relativePath) || !existsSync(script)) {
+      return null;
+    }
+    return { command: nodeExecutable, args: [script, ...args] };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -95,15 +139,15 @@ function resolveViaPowerShell(command: string): string | null {
 /**
  * Resolves an executable through the Windows where command.
  */
-function resolveViaWhere(command: string): string | null {
+function resolveViaWhere(command: string): string[] {
   try {
     const output = execFileSync("where.exe", [command], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"]
     });
-    return output.split(/\r?\n/).map((line) => line.trim()).find((line) => line && !line.toLowerCase().endsWith(".ps1")) ?? null;
+    return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   } catch {
-    return null;
+    return [];
   }
 }
 

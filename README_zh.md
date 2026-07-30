@@ -4,7 +4,7 @@
 
 MCP Gateway 是一个节省 token 的 Model Context Protocol 网关。它不把所有下游工具展开到每个客户端的启动上下文，而是通过 6 个稳定工具完成发现、管理和转发。
 
-MCP Gateway v0.6.3 使用官方 TypeScript SDK v2。
+MCP Gateway v0.6.4 使用官方 TypeScript SDK v2。
 
 > [!IMPORTANT]
 > MCP Gateway v0.6.2 及后续版本仅接受 MCP `2026-07-28`、`2025-11-25` 和 `2025-06-18`，传输方式仅支持标准换行分隔 stdio 和单端点 Streamable HTTP。不支持独立 HTTP+SSE（`/sse`）、`Content-Length` framing 和其他协议版本。
