@@ -79,23 +79,40 @@ test("gateway proxies modern MRTR state and input responses across two tool laye
   });
 });
 
-test("legacy upstream clients can complete MRTR against a modern downstream service", async () => {
-  await withLegacyInMemoryProxy(async ({ client }) => {
+for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
+  test(`MCP ${protocolVersion} upstream clients can complete MRTR against a modern downstream service`, async () => {
+    const operation = `${protocolVersion}-deploy`;
+    await withLegacyInMemoryProxy(async ({ client }) => {
+      const result = await client.callTool({
+        name: "gateway_call_tool",
+        arguments: {
+          serviceId: "downstream",
+          toolName: "needs_confirmation",
+          arguments: { operation }
+        }
+      });
+      assert.notEqual(result.isError, true, JSON.stringify(result));
+      assert.deepEqual(result.structuredContent, {
+        operation,
+        confirmed: true,
+        state: "downstream-state-v1"
+      });
+    }, protocolVersion);
+  });
+}
+
+test("gateway proxies a modern upstream call to an MCP 2025-11-25 downstream service", async () => {
+  await withProxy(async ({ client }) => {
     const result = await client.callTool({
       name: "gateway_call_tool",
       arguments: {
         serviceId: "downstream",
-        toolName: "needs_confirmation",
-        arguments: { operation: "legacy-deploy" }
+        toolName: "arbitrary_json",
+        arguments: {}
       }
     });
-    assert.notEqual(result.isError, true, JSON.stringify(result));
-    assert.deepEqual(result.structuredContent, {
-      operation: "legacy-deploy",
-      confirmed: true,
-      state: "downstream-state-v1"
-    });
-  });
+    assert.deepEqual(result.structuredContent, [1, true, null, { nested: "value" }]);
+  }, () => undefined, "2025-11-25");
 });
 
 test("gateway rejects MRTR when the modern upstream omits the required capability", async () => {
@@ -188,9 +205,10 @@ test("gateway propagates upstream cancellation to the active downstream HTTP cal
 
 async function withProxy(
   assertion: (context: { client: Client; gatewayUrl: string }) => Promise<void>,
-  onDownstreamCancelled: (cancelled: boolean) => void = () => undefined
+  onDownstreamCancelled: (cancelled: boolean) => void = () => undefined,
+  downstreamProtocolVersion: "2026-07-28" | "2025-11-25" = "2026-07-28"
 ): Promise<void> {
-  const downstream = await startDownstream(onDownstreamCancelled);
+  const downstream = await startDownstream(onDownstreamCancelled, downstreamProtocolVersion);
   const tempDirectory = await mkdtemp(join(tmpdir(), "mcp-gateway-proxy-"));
   const configPath = join(tempDirectory, "config.json");
   await writeFile(configPath, JSON.stringify({
@@ -237,7 +255,8 @@ async function withProxy(
 }
 
 async function withLegacyInMemoryProxy(
-  assertion: (context: { client: Client }) => Promise<void>
+  assertion: (context: { client: Client }) => Promise<void>,
+  protocolVersion: "2025-11-25" | "2025-06-18"
 ): Promise<void> {
   const downstream = await startDownstream(() => undefined);
   const tempDirectory = await mkdtemp(join(tmpdir(), "mcp-gateway-legacy-proxy-"));
@@ -260,9 +279,9 @@ async function withLegacyInMemoryProxy(
   await registry.initialize();
   const gatewayServer = createGatewayMcpServer(new McpGatewayEngine(registry, logger));
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "legacy-proxy-test", version: "1.0.0" }, {
+  const client = new Client({ name: `${protocolVersion}-proxy-test`, version: "1.0.0" }, {
     capabilities: { elicitation: { form: {} } },
-    supportedProtocolVersions: ["2025-06-18"]
+    supportedProtocolVersions: [protocolVersion]
   });
   client.setRequestHandler("elicitation/create", async () => ({
     action: "accept",
@@ -283,17 +302,22 @@ async function withLegacyInMemoryProxy(
 }
 
 async function startDownstream(
-  onCancelled: (cancelled: boolean) => void
+  onCancelled: (cancelled: boolean) => void,
+  protocolVersion: "2026-07-28" | "2025-11-25" = "2026-07-28"
 ): Promise<{ url: string; close: () => Promise<void> }> {
   const handler = createMcpHandler(() => {
     const server = new McpServer(
       { name: "proxy-downstream", version: "1.0.0" },
       {
-        supportedProtocolVersions: ["2026-07-28"],
-        cacheHints: {
-          "server/discover": { ttlMs: 1_000, cacheScope: "private" },
-          "tools/list": { ttlMs: 1_000, cacheScope: "private" }
-        }
+        supportedProtocolVersions: [protocolVersion],
+        ...(protocolVersion === "2026-07-28"
+          ? {
+              cacheHints: {
+                "server/discover": { ttlMs: 1_000, cacheScope: "private" as const },
+                "tools/list": { ttlMs: 1_000, cacheScope: "private" as const }
+              }
+            }
+          : {})
       }
     );
     server.registerTool(
@@ -361,7 +385,9 @@ async function startDownstream(
       return { content: [{ type: "text", text: "cancelled" }] };
     });
     return server;
-  }, { legacy: "reject", responseMode: "sse" });
+  }, protocolVersion === "2026-07-28"
+    ? { legacy: "reject", responseMode: "sse" }
+    : { legacy: "stateless" });
   const nodeHandler = toNodeHandler(handler);
   const server = http.createServer((request, response) => void nodeHandler(request, response));
   await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));

@@ -69,25 +69,40 @@ test("StreamableHttpGatewayServer serves MCP 2026-07-28 without protocol session
   }
 });
 
-test("StreamableHttpGatewayServer keeps legacy 2025 clients working on the same endpoint", async () => {
-  const server = createGatewayServer();
-  await server.start();
-  const client = new Client(
-    { name: "legacy-http-test", version: "1.0.0" },
-    { supportedProtocolVersions: ["2025-06-18"] }
-  );
-  const transport = new StreamableHTTPClientTransport(new URL(server.url));
+for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
+  test(`StreamableHttpGatewayServer serves MCP ${protocolVersion} on the same endpoint`, async () => {
+    const server = createGatewayServer();
+    await server.start();
+    const client = new Client(
+      { name: `http-${protocolVersion}-test`, version: "1.0.0" },
+      { supportedProtocolVersions: [protocolVersion] }
+    );
+    const transport = new StreamableHTTPClientTransport(new URL(server.url));
 
-  try {
-    await client.connect(transport);
-    assert.equal(client.getProtocolEra(), "legacy");
-    assert.equal(client.getNegotiatedProtocolVersion(), "2025-06-18");
-    assert.equal((await client.listTools()).tools.length, 6);
-  } finally {
-    await client.close().catch(() => undefined);
-    await server.stop();
-  }
-});
+    try {
+      await client.connect(transport);
+      assert.equal(client.getProtocolEra(), "legacy");
+      assert.equal(client.getNegotiatedProtocolVersion(), protocolVersion);
+      assert.equal((await client.listTools()).tools.length, 6);
+      const called = await client.callTool({
+        name: "gateway_list_services",
+        arguments: {}
+      });
+      assert.deepEqual(called.structuredContent, {
+        services: [
+          {
+            serviceId: "demo",
+            description: "Demo service.",
+            available: true
+          }
+        ]
+      });
+    } finally {
+      await client.close().catch(() => undefined);
+      await server.stop();
+    }
+  });
+}
 
 test("StreamableHttpGatewayServer rejects clients that only support an excluded revision", async () => {
   const server = createGatewayServer();
@@ -99,7 +114,7 @@ test("StreamableHttpGatewayServer rejects clients that only support an excluded 
   try {
     await assert.rejects(
       client.connect(new StreamableHTTPClientTransport(new URL(server.url))),
-      /protocol version is not supported: 2025-06-18/
+      /protocol version is not supported: 2025-11-25/
     );
   } finally {
     await client.close().catch(() => undefined);
@@ -265,51 +280,62 @@ test("StreamableHttpClient negotiates modern HTTP and preserves full tool metada
   }
 });
 
-test("StreamableHttpClient automatically negotiates 2025-06-18 Streamable HTTP", async () => {
-  const server = await startLegacyStreamableHttpServer("2025-06-18");
-  const client = new StreamableHttpClient({
-    serviceId: "legacy-http-demo",
-    enable: true,
-    name: "Legacy HTTP Demo",
-    transport: {
-      type: "http",
-      url: server.url
+for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
+  test(`StreamableHttpClient automatically negotiates ${protocolVersion} Streamable HTTP`, async () => {
+    const server = await startLegacyStreamableHttpServer(protocolVersion);
+    const client = new StreamableHttpClient({
+      serviceId: `http-${protocolVersion}-demo`,
+      enable: true,
+      name: `HTTP ${protocolVersion} Demo`,
+      transport: {
+        type: "http",
+        url: server.url
+      }
+    }, new Logger());
+    try {
+      const metadata = await client.getMetadata();
+      assert.equal(metadata.protocolEra, "legacy");
+      assert.equal(metadata.protocolVersion, protocolVersion);
+      assert.equal(metadata.tools.length, 1);
+      assert.equal(metadata.tools[0]?.name, "mcp_2025_echo");
+      if (protocolVersion === "2025-11-25") {
+        assert.deepEqual(metadata.tools[0]?.icons, [{
+          src: "https://example.com/mcp-2025-echo.svg",
+          mimeType: "image/svg+xml",
+          sizes: ["any"]
+        }]);
+      }
+      const result = await client.callTool("mcp_2025_echo", {});
+      assert.deepEqual(result.structuredContent, { echoed: "2025" });
+    } finally {
+      await client.dispose();
+      await server.close();
     }
-  }, new Logger());
-  try {
-    const metadata = await client.getMetadata();
-    assert.equal(metadata.protocolEra, "legacy");
-    assert.equal(metadata.protocolVersion, "2025-06-18");
-    assert.equal(metadata.tools.length, 1);
-    assert.equal(metadata.tools[0]?.name, "mcp_2025_echo");
-  } finally {
-    await client.dispose();
-    await server.close();
-  }
-});
+  });
 
-test("StreamableHttpClient preserves a standard 2025-06-18 HTTP session", async () => {
-  const server = await startSessionful2025HttpServer();
-  const client = new StreamableHttpClient({
-    serviceId: "sessionful-http-2025",
-    enable: true,
-    name: "Sessionful HTTP 2025",
-    transport: {
-      type: "http",
-      url: server.url
+  test(`StreamableHttpClient preserves a standard ${protocolVersion} HTTP session`, async () => {
+    const server = await startSessionful2025HttpServer(protocolVersion);
+    const client = new StreamableHttpClient({
+      serviceId: `sessionful-http-${protocolVersion}`,
+      enable: true,
+      name: `Sessionful HTTP ${protocolVersion}`,
+      transport: {
+        type: "http",
+        url: server.url
+      }
+    }, new Logger());
+    try {
+      const metadata = await client.getMetadata();
+      assert.equal(metadata.protocolVersion, protocolVersion);
+      assert.equal(metadata.tools[0]?.name, "session_echo");
+      assert.equal(server.generatedSessions(), 1);
+      assert.ok(server.sessionRequests() >= 1);
+    } finally {
+      await client.dispose();
+      await server.close();
     }
-  }, new Logger());
-  try {
-    const metadata = await client.getMetadata();
-    assert.equal(metadata.protocolVersion, "2025-06-18");
-    assert.equal(metadata.tools[0]?.name, "session_echo");
-    assert.equal(server.generatedSessions(), 1);
-    assert.ok(server.sessionRequests() >= 1);
-  } finally {
-    await client.dispose();
-    await server.close();
-  }
-});
+  });
+}
 
 test("StreamableHttpClient rejects HTTP protocol revisions outside the allow-list", async () => {
   const server = await startLegacyStreamableHttpServer("2025-03-26");
@@ -445,8 +471,15 @@ async function startLegacyStreamableHttpServer(protocolVersion: string): Promise
       { name: "mcp-2025-test", version: "1.0.0" },
       { supportedProtocolVersions: [protocolVersion] }
     );
-    server.registerTool("mcp_2025_echo", {}, async () => ({
-      content: [{ type: "text", text: "2025" }]
+    server.registerTool("mcp_2025_echo", {
+      icons: [{
+        src: "https://example.com/mcp-2025-echo.svg",
+        mimeType: "image/svg+xml",
+        sizes: ["any"]
+      }]
+    }, async () => ({
+      content: [{ type: "text", text: "2025" }],
+      structuredContent: { echoed: "2025" }
     }));
     return server;
   });
@@ -468,7 +501,7 @@ async function startLegacyStreamableHttpServer(protocolVersion: string): Promise
   };
 }
 
-async function startSessionful2025HttpServer(): Promise<{
+async function startSessionful2025HttpServer(protocolVersion: "2025-11-25" | "2025-06-18"): Promise<{
   url: string;
   generatedSessions: () => number;
   sessionRequests: () => number;
@@ -484,7 +517,7 @@ async function startSessionful2025HttpServer(): Promise<{
   });
   const mcpServer = new McpServer(
     { name: "sessionful-mcp-2025-test", version: "1.0.0" },
-    { supportedProtocolVersions: ["2025-06-18"] }
+    { supportedProtocolVersions: [protocolVersion] }
   );
   mcpServer.registerTool("session_echo", {}, async () => ({
     content: [{ type: "text", text: "session" }]

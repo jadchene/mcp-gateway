@@ -11,7 +11,7 @@ const server = new McpServer(
 server.registerTool(
   "mcp_2025_echo",
   {
-    description: "Echoes through a 2025-06-18 stdio service.",
+    description: `Echoes through a ${protocolVersion} stdio service.`,
     inputSchema: z.object({
       message: z.string()
     })
