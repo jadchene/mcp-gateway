@@ -48,7 +48,11 @@ class Application {
   /**
    * Stores the gateway server bound to stdin/stdout.
    */
-  private readonly server = new GatewayServer(this.registry, this.logger, this.engine);
+  private readonly server = new GatewayServer(
+    this.registry,
+    this.logger,
+    this.engine
+  );
 
   /**
    * Stores the optional Streamable HTTP gateway server.
@@ -108,6 +112,7 @@ class Application {
       this.logger.info("gateway.stopping", { signal });
       this.watcher.stop();
       await this.httpServer?.stop();
+      await this.server.stop();
       await this.registry.dispose();
       process.exit(0);
     };
@@ -138,13 +143,15 @@ if (import.meta.main) {
 }
 
 export function parseCliArgs(args: string[]): CliOptions {
+  if (args.includes("--protocol-mode")) {
+    throw new Error("--protocol-mode is no longer supported; protocol negotiation is automatic.");
+  }
   const configPath = readOption(args, "--config") ?? process.env.MCP_GATEWAY_CONFIG ?? "config.json";
   const port = readIntegerOption(args, "--port");
   const host = readOption(args, "--host");
   const path = readHttpPathOption(args);
   const enableHttp = args.includes("--http");
   const enableJsonResponse = args.includes("--json-response");
-
   return {
     configPath,
     server: enableHttp

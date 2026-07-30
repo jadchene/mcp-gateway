@@ -1,8 +1,7 @@
 import { Logger } from "./logger.ts";
-import { jsonRpcError, jsonRpcResult, type JsonRpcFailure, type JsonRpcMessage, type JsonRpcRequest, type JsonRpcSuccess } from "./mcp/protocol.ts";
 import { ServiceRegistry } from "./service-registry.ts";
+import type { DownstreamCallContext, DownstreamToolResult } from "./mcp/client-types.ts";
 import type { JsonObject, ServiceRuntimeSnapshot } from "./types.ts";
-import { VERSION } from "./version.ts";
 
 /**
  * Handles MCP JSON-RPC requests independently of the outer transport.
@@ -14,11 +13,6 @@ export class McpGatewayEngine {
   private readonly registry: ServiceRegistry;
 
   /**
-   * Stores the shared logger instance.
-   */
-  private readonly logger: Logger;
-
-  /**
    * Stores the startup barrier that must resolve before gateway tools can use the registry.
    */
   private startupBarrier: Promise<void> = Promise.resolve();
@@ -28,10 +22,9 @@ export class McpGatewayEngine {
    */
   public constructor(
     registry: ServiceRegistry,
-    logger: Logger
+    _logger: Logger
   ) {
     this.registry = registry;
-    this.logger = logger;
   }
 
   /**
@@ -42,61 +35,14 @@ export class McpGatewayEngine {
   }
 
   /**
-   * Handles one inbound JSON-RPC message and returns a response when the message has an id.
+   * Executes one registered gateway tool independently of the outer SDK transport.
    */
-  public async handleMessage(message: JsonRpcMessage): Promise<JsonRpcSuccess | JsonRpcFailure | null> {
-    if (!isJsonRpcRequest(message)) {
-      return null;
-    }
-    return this.handleRequest(message);
-  }
-
-  /**
-   * Handles one inbound JSON-RPC request.
-   */
-  public async handleRequest(request: JsonRpcRequest): Promise<JsonRpcSuccess | JsonRpcFailure | null> {
-    try {
-      if (request.method === "initialize") {
-        return jsonRpcResult(request.id, this.buildInitializeResult());
-      }
-
-      if (request.method === "ping") {
-        return jsonRpcResult(request.id, {});
-      }
-
-      if (request.method === "tools/list") {
-        return jsonRpcResult(request.id, { tools: buildGatewayTools() });
-      }
-
-      if (request.method === "tools/call") {
-        await this.startupBarrier;
-        const result = await this.handleToolCall(request);
-        return jsonRpcResult(request.id, result);
-      }
-
-      if (request.method === "notifications/initialized") {
-        return null;
-      }
-
-      return jsonRpcError(request.id, -32601, `Unsupported method '${request.method}'.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error("gateway.request_failed", {
-        method: request.method,
-        message
-      });
-      return jsonRpcError(request.id, -32000, message);
-    }
-  }
-
-  /**
-   * Handles one gateway tool invocation.
-   */
-  public async handleToolCall(request: JsonRpcRequest): Promise<unknown> {
-    const params = toObject(request.params, "The tools/call params must be an object.");
-    const toolName = requireString(params.name, "The tool name must be a string.");
-    const args = toObject(params.arguments ?? {}, "The tool arguments must be an object.");
-
+  public async executeTool(
+    toolName: string,
+    args: JsonObject,
+    context: DownstreamCallContext = {}
+  ): Promise<DownstreamToolResult> {
+    await this.startupBarrier;
     switch (toolName) {
       case "gateway_list_services":
         return successContent({
@@ -111,7 +57,7 @@ export class McpGatewayEngine {
       case "gateway_manage_service":
         return this.manageService(args);
       case "gateway_call_tool":
-        return this.callDownstreamTool(args);
+        return this.callDownstreamTool(args, context);
       default:
         throw new Error(`Unknown gateway tool '${toolName}'.`);
     }
@@ -120,7 +66,7 @@ export class McpGatewayEngine {
   /**
    * Returns detailed metadata for one logical service.
    */
-  public getService(args: JsonObject): unknown {
+  public getService(args: JsonObject): DownstreamToolResult {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
     const snapshot = this.registry.getService(serviceId);
     if (!snapshot) {
@@ -142,7 +88,7 @@ export class McpGatewayEngine {
   /**
    * Returns tool summaries for one logical service.
    */
-  public listTools(args: JsonObject): unknown {
+  public listTools(args: JsonObject): DownstreamToolResult {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
     const toolName = optionalUniqueNonEmptyStringArray(args.toolName, "The 'toolName' argument must be a unique non-empty string array when provided.");
     const desc = optionalUniqueNonEmptyStringArray(args.desc, "The 'desc' argument must be a unique non-empty string array when provided.");
@@ -167,7 +113,7 @@ export class McpGatewayEngine {
   /**
    * Returns input and output schemas keyed by downstream tool name.
    */
-  public getToolSchema(args: JsonObject): unknown {
+  public getToolSchema(args: JsonObject): DownstreamToolResult {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
     const toolNames = requireUniqueNonEmptyStringArray(args.toolName, "The 'toolName' argument must be a unique non-empty string array.");
     const schemas = Object.fromEntries(toolNames.map((toolName) => {
@@ -189,18 +135,21 @@ export class McpGatewayEngine {
   /**
    * Routes one downstream tool call through the service registry.
    */
-  public async callDownstreamTool(args: JsonObject): Promise<unknown> {
+  public async callDownstreamTool(
+    args: JsonObject,
+    context: DownstreamCallContext = {}
+  ): Promise<DownstreamToolResult> {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
     const toolName = requireString(args.toolName, "The 'toolName' argument must be a string.");
     const toolArgs = toObject(args.arguments, "The 'arguments' field must be an object.");
-    const call = await this.registry.callTool(serviceId, toolName, toolArgs);
+    const call = await this.registry.callTool(serviceId, toolName, toolArgs, context);
     return call.result;
   }
 
   /**
    * Applies one compact service management action.
    */
-  public async manageService(args: JsonObject): Promise<unknown> {
+  public async manageService(args: JsonObject): Promise<DownstreamToolResult> {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
     const action = requireServiceAction(args.action);
     const result = await this.registry.manageService(serviceId, action);
@@ -211,30 +160,12 @@ export class McpGatewayEngine {
       available: result.available
     });
   }
-
-  /**
-   * Builds the MCP initialize result advertised by the gateway.
-   */
-  private buildInitializeResult(): JsonObject {
-    return {
-      protocolVersion: "2025-06-18",
-      capabilities: {
-        tools: {
-          listChanged: false
-        }
-      },
-      serverInfo: {
-        name: "mcp-gateway",
-        version: VERSION
-      }
-    };
-  }
 }
 
 /**
  * Builds the fixed gateway tool definitions exposed to all MCP clients.
  */
-export function buildGatewayTools(): JsonObject[] {
+export function buildGatewayTools(): GatewayToolDefinition[] {
   const outputSchemas = buildGatewayOutputSchemas();
   return [
     {
@@ -307,6 +238,28 @@ export function buildGatewayTools(): JsonObject[] {
 }
 
 /**
+ * Describes one stable gateway tool registered with the MCP SDK.
+ */
+export interface GatewayToolDefinition {
+  /**
+   * Provides the public tool name.
+   */
+  name: string;
+  /**
+   * Provides the public tool description.
+   */
+  description: string;
+  /**
+   * Provides the JSON Schema 2020-12 compatible input contract.
+   */
+  inputSchema: JsonObject;
+  /**
+   * Provides the stable output schema when the tool has one.
+   */
+  outputSchema?: JsonObject;
+}
+
+/**
  * Formats one service into the compact listServices result shape.
  */
 function formatServiceSummary(snapshot: ServiceRuntimeSnapshot): JsonObject {
@@ -320,7 +273,7 @@ function formatServiceSummary(snapshot: ServiceRuntimeSnapshot): JsonObject {
 /**
  * Builds a standard MCP tool success payload with text and structured content.
  */
-function successContent(data: JsonObject): JsonObject {
+function successContent(data: JsonObject): DownstreamToolResult {
   return {
     content: [
       {
@@ -525,8 +478,4 @@ function requireServiceAction(input: unknown): "reconnect" | "enable" | "disable
     return input;
   }
   throw new Error("The 'action' argument must be one of 'reconnect', 'enable', or 'disable'.");
-}
-
-function isJsonRpcRequest(message: JsonRpcMessage): message is JsonRpcRequest {
-  return "id" in message && "method" in message && typeof message.method === "string";
 }

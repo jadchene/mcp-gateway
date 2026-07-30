@@ -2,85 +2,50 @@ English | [简体中文](./README_zh.md)
 
 # MCP Gateway
 
-MCP Gateway is a lightweight Model Context Protocol gateway that exposes one small MCP entry point for multiple downstream MCP services.
+MCP Gateway is a token-efficient Model Context Protocol gateway. It exposes six stable routing tools instead of flattening every downstream tool into each client's startup context.
 
-Instead of flattening every downstream tool into the client at startup, the gateway exposes a fixed discovery and routing API. Agents can list services, inspect tools for one service, fetch one schema, and then forward the actual tool call.
+MCP Gateway v0.6.0 uses the official TypeScript SDK v2.
 
-## Features
+> [!IMPORTANT]
+> v0.6.0 and later support only MCP `2026-07-28` and `2025-06-18`, using standard newline-delimited stdio or single-endpoint Streamable HTTP. Compatibility with older protocol revisions, standalone HTTP+SSE (`/sse`), and `Content-Length` framing has been removed.
 
-- One MCP entry point for multiple downstream MCP services.
-- Token-efficient discovery through a small fixed gateway tool surface.
-- Stdio and Streamable HTTP downstream transports.
-- Optional inbound Streamable HTTP endpoint enabled by CLI flags.
-- Hot reload for service-pool config changes.
-- Stops removed, disabled, or replaced downstream services during reload.
-- Restarts failed downstream processes up to three times before marking them unavailable.
-- Atomic config reload that keeps the previous valid config when a new config is invalid.
-- Optional newline-delimited JSON file logging that never writes operational logs to MCP stdout.
-- Version reporting through `--version` or `-v`.
+## Capabilities
 
-## Why Use It
+- Inbound MCP server over stdio and stateless Streamable HTTP.
+- Outbound MCP client over standard stdio and Streamable HTTP.
+- Automatic negotiation between MCP `2026-07-28` and `2025-06-18`.
+- Both standard revisions are served automatically on inbound transports.
+- Full downstream tool metadata and JSON Schema 2020-12 preservation.
+- MRTR elicitation forwarding, opaque `requestState` forwarding, arbitrary JSON `structuredContent`, cancellation, and `x-mcp-header` handling through the SDK.
+- SDK-managed response cache hints and client-local private caches.
+- Hot reload, lifecycle recovery, atomic invalid-config rejection, and optional file logging.
+- Host and Origin validation for inbound HTTP. Operational logs never use MCP stdout.
 
-- Keep agent-side MCP configuration small: every agent connects to the gateway, while downstream services are managed in one config file.
-- Reduce initial tool context: agents discover only the service, tool, and schema needed for the current task.
-- Keep service lifecycle control centralized instead of duplicating command paths, environment variables, and secrets across multiple clients.
+## Requirements and Installation
 
-## Quick Start
-
-Install globally:
+- Node.js 24 or later.
 
 ```bash
 npm install -g @jadchene/mcp-gateway-service
-```
-
-Create a local config:
-
-```bash
 cp config.example.json config.json
-```
-
-Start the stdio gateway:
-
-```bash
 mcp-gateway-service --config ./config.json
 ```
 
-Start with inbound Streamable HTTP:
+Enable the additional inbound HTTP endpoint:
 
 ```bash
 mcp-gateway-service --config ./config.json --http --host 127.0.0.1 --port 3100 --path /mcp
 ```
 
-Use stateless JSON responses for HTTP clients that expect direct JSON-RPC responses from `POST`:
+When HTTP is enabled, the process serves both stdio and HTTP. Use `--version` or `-v` to print the installed version.
 
-```bash
-mcp-gateway-service --config ./config.json --http --port 3100 --path /mcp --json-response
-```
+## Protocol Negotiation
 
-Check the installed version:
+Protocol selection is automatic. The gateway and its downstream clients negotiate MCP `2026-07-28` first and use `2025-06-18` when the peer supports only that standard revision. These are the only accepted protocol revisions. `--json-response` selects the standard inbound Streamable HTTP response shape; it does not create protocol sessions.
 
-```bash
-mcp-gateway-service --version
-mcp-gateway-service -v
-```
+## Service Configuration
 
-## Configuration
-
-Pass the config file by CLI argument:
-
-```bash
-mcp-gateway-service --config ./config.json
-```
-
-Or by environment variable:
-
-```bash
-MCP_GATEWAY_CONFIG=./config.json mcp-gateway-service
-```
-
-If neither is provided, the service tries `config.json` in the current working directory.
-
-Config example:
+Pass `--config`, set `MCP_GATEWAY_CONFIG`, or place `config.json` in the current directory.
 
 ```json
 {
@@ -90,105 +55,71 @@ Config example:
   },
   "services": [
     {
-      "serviceId": "demo-echo",
+      "serviceId": "local-tools",
       "enable": true,
-      "name": "Demo Echo Service",
-      "description": "Sample echo MCP service.",
+      "name": "Local Tools",
       "transport": {
         "type": "stdio",
         "command": "node",
-        "args": [
-          "--experimental-strip-types",
-          "examples/echo-service.ts"
-        ]
+        "args": ["./server.js"]
       }
     },
     {
-      "serviceId": "remote-http",
-      "enable": false,
-      "name": "Remote Streamable HTTP Service",
-      "description": "Example downstream MCP service over Streamable HTTP.",
+      "serviceId": "remote-tools",
+      "enable": true,
+      "name": "Remote Tools",
       "transport": {
         "type": "http",
         "url": "http://127.0.0.1:3200/mcp",
         "headers": {
-          "Authorization": "Bearer ${MCP_TOKEN}"
-        },
-        "enableJsonResponse": false
+          "Authorization": "Bearer example-token"
+        }
       }
     }
   ]
 }
 ```
 
-Configuration notes:
+Common fields:
 
-- `logging.enable` defaults to `false`.
-- `logging.path` is required only when `logging.enable` is `true`.
-- Relative `logging.path` values are resolved from the config file directory.
-- Service `enable` defaults to `true`; setting it to `false` skips that service.
-- `cwd` and `env` are optional for stdio services.
-- Stdio `transport.framing` may be `line` or `content-length`. When omitted, the gateway tries `line` and then `content-length`.
-- HTTP downstream services use `transport.type: "http"` and `transport.url`.
-- HTTP `transport.headers` provides static request headers.
-- HTTP `transport.enableJsonResponse` enables stateless JSON response mode for that downstream service.
+- `enable` defaults to `true`.
+- `logging.enable` defaults to `false`. A relative log path is resolved from the config file directory.
+- Stdio always uses the standard newline-delimited JSON-RPC transport.
+- HTTP always uses the standard single-endpoint Streamable HTTP transport.
+- Protocol revision negotiation is automatic and has no configuration switch.
+- Static HTTP headers are supported. Header values and environment secrets are not written to logs.
 
 ## Inbound Streamable HTTP
 
-Inbound HTTP is enabled only with `--http`. Passing `--host`, `--port`, `--path`, or `--json-response` without `--http` does not start an HTTP listener.
+MCP `2026-07-28` HTTP is stateless: each request is an independent `POST /mcp`. The gateway does not create `Mcp-Session-Id` sessions, and `GET`/`DELETE` return `405`. The SDK validates `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, request metadata, and protocol errors.
 
-The HTTP endpoint uses the same path for `GET` and `POST`:
+The same endpoint serves MCP `2025-06-18` through its standard stateless Streamable HTTP form. As a downstream client, the gateway also preserves a `2025-06-18` session when a server issues `Mcp-Session-Id`.
 
-- `GET /mcp` opens the SSE read channel and returns the session in the `Mcp-Session-Id` response header.
-- `POST /mcp` sends JSON-RPC messages. New clients should bind the session through the `Mcp-Session-Id` request header.
-- Query-string `sessionId` is accepted for compatibility.
-- The `endpoint` SSE event advertises the single path, such as `/mcp`.
+The default bind address is `127.0.0.1`. Host and Origin checks protect the local endpoint from DNS rebinding. Do not expose it beyond a trusted local network without an authentication layer.
 
 ## Gateway Tools
 
-The gateway exposes six public tools:
-
 | Tool | Purpose |
 | --- | --- |
-| `gateway_list_services` | List downstream services with each logical `serviceId`, description, and current availability. |
-| `gateway_get_service` | Return one service's identity, availability, recent error and connection time, protocol version, and server information. Use this for diagnostics. |
-| `gateway_list_tools` | Search tool names or descriptions by case-insensitive literal substrings. Optional unique non-empty `toolName` and `desc` arrays use OR; `includeSchema: true` includes schemas. |
-| `gateway_get_tool_schema` | Return schemas for unique exact, case-sensitive tool names. Results are keyed by name, and any unknown name fails the whole request. |
-| `gateway_manage_service` | Reconnect without changing config, or persistently enable/disable a service in the config and reload the registry. |
-| `gateway_call_tool` | Call one exact downstream tool and forward its result unchanged. The downstream tool may have read or write side effects. |
+| `gateway_list_services` | List configured downstream services and availability. |
+| `gateway_get_service` | Inspect one service's status, protocol version, and server identity. |
+| `gateway_list_tools` | Search tool names/descriptions; optionally include schemas. |
+| `gateway_get_tool_schema` | Fetch schemas for exact, case-sensitive tool names in one batch. |
+| `gateway_manage_service` | Reconnect or persistently enable/disable one configured service. |
+| `gateway_call_tool` | Call one downstream tool and preserve its MCP result. |
 
-Default token-efficient workflow:
+Recommended flow:
 
-1. Call `gateway_list_services` once.
-2. Call `gateway_list_tools(serviceId)` only when a service is needed. Use a `toolName` array for name keywords and a `desc` array for description keywords.
-3. When all filtered matches need schemas, pass `includeSchema: true`; when exact tool names are already known, call `gateway_get_tool_schema` with a non-empty name array.
-4. Call `gateway_call_tool` to execute the downstream tool.
-5. Use `gateway_get_service` only for diagnostics.
-6. Use `gateway_manage_service` only to reconnect, enable, or disable a service.
+1. Call `gateway_list_services`.
+2. Call `gateway_list_tools` only for the relevant service, using `toolName` and/or `desc` filters.
+3. Reuse schemas returned by `includeSchema: true`, or batch exact names with `gateway_get_tool_schema`.
+4. Call `gateway_call_tool`; always provide `arguments`, using `{}` for a no-argument tool.
 
-`gateway_get_tool_schema.toolName` is a required unique non-empty string array and returns a `schemas` object keyed by each requested exact tool name. Use a one-element array when requesting one schema.
+`gateway_call_tool` intentionally has no fixed output schema because downstream `structuredContent` may be any JSON value. Modern MRTR `input_required` results are forwarded without automatic approval; the upstream client must declare the required capability and retry with `inputResponses` and the opaque `requestState`.
 
-`gateway_list_tools.toolName` and `gateway_list_tools.desc` are optional unique non-empty string arrays. Matching is case-insensitive and uses literal substrings. When both are present, a tool is returned when either its name or description matches any supplied keyword. Description matching can also hit negative guidance such as "when not to use", so inspect the returned descriptions before selecting a tool.
+## Client Examples
 
-All gateway tools with stable structured content expose an `outputSchema`. `gateway_call_tool` intentionally omits a fixed output schema because it forwards arbitrary downstream results. Its `arguments` object is always required; pass `{}` for a downstream tool with no arguments.
-
-`gateway_manage_service` actions:
-
-- `reconnect`: retry the current downstream lifecycle without modifying config.
-- `enable`: persist `enable: true` for the service and reload config.
-- `disable`: persist `enable: false` for the service and reload config.
-
-## Skill Integration
-
-This repository includes a public gateway skill:
-
-- Skill path: `skills/mcp-gateway/SKILL.md`
-
-Use it when your agent supports skills. It keeps discovery token-efficient and routes downstream calls through the minimal gateway contract.
-
-## MCP Client Configuration
-
-Codex:
+Stdio (Codex-style TOML):
 
 ```toml
 [mcp_servers.gateway]
@@ -196,97 +127,22 @@ command = "mcp-gateway-service"
 args = ["--config", "./config.json"]
 ```
 
-Gemini CLI:
-
-```json
-{
-  "mcpServers": {
-    "gateway": {
-      "type": "stdio",
-      "command": "mcp-gateway-service",
-      "args": ["--config", "./config.json"]
-    }
-  }
-}
-```
-
-Claude Code:
-
-```json
-{
-  "mcpServers": {
-    "gateway": {
-      "type": "stdio",
-      "command": "mcp-gateway-service",
-      "args": ["--config", "./config.json"]
-    }
-  }
-}
-```
-
-Streamable HTTP mode:
-
-Start one shared HTTP gateway process first:
-
-```bash
-mcp-gateway-service --config ./config.json --http --host 127.0.0.1 --port 3100 --path /mcp
-```
-
-Then point MCP clients at the HTTP endpoint.
-
-Codex:
+Streamable HTTP:
 
 ```toml
 [mcp_servers.gateway]
 url = "http://127.0.0.1:3100/mcp"
 ```
 
-Gemini CLI:
-
-```json
-{
-  "mcpServers": {
-    "gateway": {
-      "httpUrl": "http://127.0.0.1:3100/mcp"
-    }
-  }
-}
-```
-
-Claude Code:
-
-```json
-{
-  "mcpServers": {
-    "gateway": {
-      "type": "http",
-      "url": "http://127.0.0.1:3100/mcp"
-    }
-  }
-}
-```
-
-Use the same URL for every client that should share the gateway service pool. Use `--json-response` only when your HTTP client expects stateless JSON-RPC responses directly from `POST` requests.
-
-## Development
+## Development and Verification
 
 ```bash
 npm install
-npm run dev
+npm run verify
+node dist/index.js --config ./config.json --version
 ```
 
-Build and test:
-
-```bash
-npm run build
-npm test
-```
-
-Run the built server:
-
-```bash
-node dist/index.js --config ./config.json
-```
+The repository also ships the public skill at `skills/mcp-gateway/SKILL.md`.
 
 ## License
 

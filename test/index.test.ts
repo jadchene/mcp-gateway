@@ -38,3 +38,9 @@ test("parseCliArgs rejects invalid HTTP path values", () => {
     parseCliArgs(["--http", "--path", "mcp"]);
   }, /--path must start/);
 });
+
+test("parseCliArgs rejects the removed manual protocol mode", () => {
+  assert.throws(() => {
+    parseCliArgs(["--protocol-mode", "legacy"]);
+  }, /protocol negotiation is automatic/);
+});

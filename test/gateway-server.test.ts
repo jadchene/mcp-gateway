@@ -146,15 +146,9 @@ test("McpGatewayEngine returns a minimal service list payload", () => {
   });
   const engine = createGatewayEngineForTest(registry);
 
-  const result = engine.handleToolCall({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "tools/call",
-    params: {
-      name: "gateway_list_services",
-      arguments: {}
-    }
-  }) as Promise<{ structuredContent?: { services?: Array<Record<string, unknown>> } }>;
+  const result = engine.executeTool("gateway_list_services", {}) as Promise<{
+    structuredContent?: { services?: Array<Record<string, unknown>> };
+  }>;
 
   return result.then((payload) => {
     assert.deepEqual(payload.structuredContent, {
@@ -678,7 +672,7 @@ test("McpGatewayEngine requires an explicit downstream arguments object", async 
 });
 
 test("McpGatewayEngine waits for the startup barrier before handling tool calls", async () => {
-  let releaseBarrier: (() => void) | null = null;
+  let releaseBarrier: () => void = () => undefined;
   const startupBarrier = new Promise<void>((resolve) => {
     releaseBarrier = resolve;
   });
@@ -700,18 +694,10 @@ test("McpGatewayEngine waits for the startup barrier before handling tool calls"
   engine.setStartupBarrier(startupBarrier);
 
   let settled = false;
-  const pending = engine.handleRequest({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "tools/call",
-    params: {
-      name: "gateway_call_tool",
-      arguments: {
-        serviceId: "demo",
-        toolName: "echo",
-        arguments: {}
-      }
-    }
+  const pending = engine.executeTool("gateway_call_tool", {
+    serviceId: "demo",
+    toolName: "echo",
+    arguments: {}
   }).then((response) => {
     settled = true;
     return response;
@@ -721,11 +707,11 @@ test("McpGatewayEngine waits for the startup barrier before handling tool calls"
   assert.equal(called, false);
   assert.equal(settled, false);
 
-  releaseBarrier?.();
+  releaseBarrier();
   const response = await pending;
 
   assert.equal(called, true);
-  assert.equal(response?.id, 1);
+  assert.deepEqual(response, { content: [] });
 });
 
 test("McpGatewayEngine exposes a compact manageService payload", async () => {
@@ -785,6 +771,7 @@ function createRegistryStub(overrides: {
   const snapshot: ServiceRuntimeSnapshot = {
     config: {
       serviceId: "playwright",
+      enable: true,
       name: "Playwright",
       description: "Browser automation MCP service.",
       transport: {
@@ -794,6 +781,7 @@ function createRegistryStub(overrides: {
     },
     metadata: {
       protocolVersion: "2025-06-18",
+      protocolEra: "legacy",
       serverInfo: null,
       tools: overrides.tools ?? [],
       refreshedAt: null

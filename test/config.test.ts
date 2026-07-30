@@ -144,14 +144,84 @@ test("validateGatewayConfig accepts Streamable HTTP downstream transport config"
           url: "http://127.0.0.1:3200/mcp",
           headers: {
             Authorization: "Bearer test"
-          },
-          enableJsonResponse: true
+          }
         }
       }
     ]
   });
 
-  assert.equal(config.services[0]?.transport.type, "http");
+  const transport = config.services[0]?.transport;
+  assert.equal(transport?.type, "http");
+});
+
+test("validateGatewayConfig normalizes HTTP defaults", () => {
+  const automatic = validateGatewayConfig({
+    services: [{
+      serviceId: "auto-http",
+      name: "Automatic HTTP",
+      transport: { type: "http", url: "http://127.0.0.1:3200/mcp" }
+    }]
+  });
+  const automaticTransport = automatic.services[0]?.transport;
+  assert.equal(automaticTransport?.type, "http");
+});
+
+test("validateGatewayConfig rejects removed non-standard transport options", () => {
+  const baseService = {
+    serviceId: "demo",
+    name: "Demo"
+  };
+
+  assert.throws(() => validateGatewayConfig({
+    services: [{
+      ...baseService,
+      transport: {
+        type: "stdio",
+        command: "node",
+        framing: "content-length"
+      }
+    }]
+  }), /framing is no longer supported/);
+
+  assert.throws(() => validateGatewayConfig({
+    services: [{
+      ...baseService,
+      transport: {
+        type: "http",
+        url: "http://127.0.0.1:3200/sse",
+        mode: "sse"
+      }
+    }]
+  }), /mode is no longer supported/);
+
+  assert.throws(() => validateGatewayConfig({
+    services: [{
+      ...baseService,
+      transport: {
+        type: "http",
+        url: "http://127.0.0.1:3200/sse",
+        enableJsonResponse: false
+      }
+    }]
+  }), /enableJsonResponse is no longer supported/);
+});
+
+test("validateGatewayConfig rejects removed protocol pinning", () => {
+  assert.throws(() => validateGatewayConfig({
+    services: [{
+      serviceId: "invalid-protocol",
+      name: "Invalid Protocol",
+      transport: { type: "stdio", command: "node", protocolMode: "legacy" }
+    }]
+  }), /protocolMode is no longer supported/);
+
+  assert.throws(() => validateGatewayConfig({
+    services: [{
+      serviceId: "pinned-http",
+      name: "Pinned HTTP",
+      transport: { type: "http", url: "http://127.0.0.1:3200/mcp", protocolMode: "modern" }
+    }]
+  }), /protocolMode is no longer supported/);
 });
 
 test("validateGatewayConfig rejects invalid Streamable HTTP downstream settings", () => {

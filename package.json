@@ -1,6 +1,6 @@
 {
   "name": "@jadchene/mcp-gateway-service",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A token-efficient MCP gateway that provides one unified entry point for multiple downstream MCP services.",
   "type": "module",
   "main": "dist/index.js",
@@ -18,12 +18,17 @@
     "url": "https://github.com/jadchene/mcp-gateway/issues"
   },
   "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "prebuild": "npm run clean",
     "build": "tsc -p tsconfig.build.json",
     "dev": "node --experimental-strip-types src/index.ts",
     "start": "node dist/index.js",
+    "pretest": "npm run build",
     "test": "node --test --experimental-strip-types test/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify": "npm run typecheck && npm test",
     "version": "node dist/index.js --version",
-    "prepare": "npm run build",
+    "prepack": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "files": [
@@ -48,5 +53,11 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "4.4.3"
   }
 }

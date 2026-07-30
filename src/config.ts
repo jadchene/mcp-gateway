@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import type { GatewayConfig, HttpTransportConfig, LoggingConfig, ServiceConfig, StdioFraming, TransportConfig } from "./types.ts";
+import type {
+  GatewayConfig,
+  HttpTransportConfig,
+  LoggingConfig,
+  ServiceConfig,
+  TransportConfig
+} from "./types.ts";
 
 /**
  * Provides config loading and validation for the gateway service pool definition.
@@ -123,15 +129,19 @@ function validateTransportConfig(serviceId: string, input: unknown): TransportCo
   const args = optionalStringArray(input.args, `service '${serviceId}' transport.args`);
   const cwd = optionalString(input.cwd, `service '${serviceId}' transport.cwd`);
   const env = optionalStringRecord(input.env, `service '${serviceId}' transport.env`);
-  const framing = optionalFraming(input.framing, `service '${serviceId}' transport.framing`);
+  if (input.protocolMode !== undefined) {
+    throw new Error(`Service '${serviceId}' transport.protocolMode is no longer supported; protocol negotiation is automatic.`);
+  }
+  if (input.framing !== undefined) {
+    throw new Error(`Service '${serviceId}' transport.framing is no longer supported; stdio always uses newline-delimited JSON-RPC.`);
+  }
 
   return {
     type: "stdio",
     command,
     args,
     cwd,
-    env,
-    framing
+    env
   };
 }
 
@@ -149,11 +159,20 @@ function validateHttpTransportConfig(serviceId: string, input: Record<string, un
     throw new Error(`The 'service ${serviceId} transport.url' field must be a valid http or https URL.`);
   }
 
+  if (input.mode !== undefined) {
+    throw new Error(`Service '${serviceId}' transport.mode is no longer supported; HTTP always uses Streamable HTTP.`);
+  }
+  if (input.enableJsonResponse !== undefined) {
+    throw new Error(`Service '${serviceId}' transport.enableJsonResponse is no longer supported.`);
+  }
+  if (input.protocolMode !== undefined) {
+    throw new Error(`Service '${serviceId}' transport.protocolMode is no longer supported; protocol negotiation is automatic.`);
+  }
+
   return {
     type: "http",
     url,
-    headers: optionalStringRecord(input.headers, `service '${serviceId}' transport.headers`),
-    enableJsonResponse: optionalBoolean(input.enableJsonResponse, `service '${serviceId}' transport.enableJsonResponse`)
+    headers: optionalStringRecord(input.headers, `service '${serviceId}' transport.headers`)
   };
 }
 
@@ -173,7 +192,6 @@ function requireNonEmptyString(input: unknown, label: string): string {
   }
   return input;
 }
-
 /**
  * Reads an optional string field.
  */
@@ -232,17 +250,4 @@ function optionalStringRecord(input: unknown, label: string): Record<string, str
   }
 
   return Object.fromEntries(entries) as Record<string, string>;
-}
-
-/**
- * Reads an optional stdio framing field.
- */
-function optionalFraming(input: unknown, label: string): StdioFraming | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (input !== "line" && input !== "content-length") {
-    throw new Error(`The '${label}' field must be 'line' or 'content-length' when present.`);
-  }
-  return input;
 }

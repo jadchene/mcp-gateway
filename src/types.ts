@@ -9,11 +9,6 @@ export type JsonObject = Record<string, unknown>;
 export type TransportConfig = StdioTransportConfig | HttpTransportConfig;
 
 /**
- * Declares the supported stdio framing styles.
- */
-export type StdioFraming = "line" | "content-length";
-
-/**
  * Declares a downstream MCP service pool config file.
  */
 export interface GatewayConfig {
@@ -117,10 +112,6 @@ export interface StdioTransportConfig {
    * Provides environment variables merged into the current process environment.
    */
   env?: Record<string, string>;
-  /**
-   * Selects the stdio message framing style used by the downstream process.
-   */
-  framing?: StdioFraming;
 }
 
 /**
@@ -139,10 +130,6 @@ export interface HttpTransportConfig {
    * Provides optional static HTTP headers sent to the downstream service.
    */
   headers?: Record<string, string>;
-  /**
-   * Returns JSON-RPC results directly from POST requests when the downstream supports stateless mode.
-   */
-  enableJsonResponse?: boolean;
 }
 
 /**
@@ -158,13 +145,33 @@ export interface ToolDefinition {
    */
   description?: string;
   /**
+   * Provides the optional human-readable title.
+   */
+  title?: string;
+  /**
    * Provides the tool input schema.
    */
-  inputSchema?: JsonObject;
+  inputSchema?: JsonObject | null;
   /**
    * Provides the optional tool output schema when exposed by the downstream service.
    */
   outputSchema?: JsonObject | null;
+  /**
+   * Preserves optional MCP tool annotations.
+   */
+  annotations?: JsonObject;
+  /**
+   * Preserves optional MCP tool icons.
+   */
+  icons?: Array<Record<string, unknown>>;
+  /**
+   * Preserves optional MCP tool execution metadata.
+   */
+  execution?: JsonObject;
+  /**
+   * Preserves extension metadata without interpreting it.
+   */
+  _meta?: JsonObject;
 }
 
 /**
@@ -175,6 +182,10 @@ export interface ServiceMetadata {
    * Indicates the downstream protocol version reported during initialization.
    */
   protocolVersion: string | null;
+  /**
+   * Indicates whether the downstream connection negotiated the 2026 or 2025 wire era.
+   */
+  protocolEra: "modern" | "legacy" | null;
   /**
    * Provides the downstream server identity when available.
    */

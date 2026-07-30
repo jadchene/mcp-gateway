@@ -6,7 +6,7 @@
   "services": [
     {
       "serviceId": "demo-echo",
-      "enable": true,
+      "enable": false,
       "name": "Demo Echo Service",
       "description": "Sample echo MCP service.",
       "transport": {
@@ -28,8 +28,7 @@
         "url": "http://127.0.0.1:3200/mcp",
         "headers": {
           "Authorization": "Bearer example-token"
-        },
-        "enableJsonResponse": false
+        }
       }
     }
   ]

@@ -4,6 +4,7 @@ import { ConfigLoader } from "./config.ts";
 import { Logger } from "./logger.ts";
 import { StdioMcpClient } from "./mcp/client.ts";
 import type { McpClient } from "./mcp/client-types.ts";
+import type { DownstreamCallContext, DownstreamToolResult } from "./mcp/client-types.ts";
 import { StreamableHttpClient } from "./mcp/http-client.ts";
 import type { GatewayConfig, ServiceConfig, ServiceMetadata, ServiceRuntimeSnapshot, ToolDefinition } from "./types.ts";
 
@@ -162,7 +163,12 @@ export class ServiceRegistry {
   /**
    * Calls one downstream tool using the only configured service process.
    */
-  public async callTool(serviceId: string, toolName: string, args: Record<string, unknown>): Promise<CallToolResult> {
+  public async callTool(
+    serviceId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    context: DownstreamCallContext = {}
+  ): Promise<CallToolResult> {
     const snapshot = this.requireService(serviceId);
     const client = this.clients.get(serviceId);
     if (!client) {
@@ -171,7 +177,7 @@ export class ServiceRegistry {
 
     const startedAt = Date.now();
     try {
-      const result = await client.callTool(toolName, args);
+      const result = await client.callTool(toolName, args, context);
       this.markServiceAvailable(serviceId, client.restartCount);
       return {
         result,
@@ -307,6 +313,7 @@ export class ServiceRegistry {
 
     let metadata: ServiceMetadata = {
       protocolVersion: null,
+      protocolEra: null,
       serverInfo: null,
       tools: [],
       refreshedAt: null
@@ -393,7 +400,7 @@ export interface CallToolResult {
   /**
    * Provides the downstream result payload.
    */
-  result: unknown;
+  result: DownstreamToolResult;
   /**
    * Provides the observed request latency in milliseconds.
    */

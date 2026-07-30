@@ -1,31 +1,16 @@
+import { serveStdio, type StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import { McpGatewayEngine } from "./gateway-engine.ts";
 import { Logger } from "./logger.ts";
-import { createMessageReader, createMessageWriter, type JsonRpcMessage } from "./mcp/protocol.ts";
+import { createGatewayMcpServer } from "./mcp/server.ts";
 import { ServiceRegistry } from "./service-registry.ts";
 
 /**
- * Exposes the MCP gateway tools over stdio.
+ * Exposes the MCP gateway over stdio through the official SDK v2.
  */
 export class GatewayServer {
-  /**
-   * Stores the transport-neutral gateway engine.
-   */
   private readonly engine: McpGatewayEngine;
-
-  /**
-   * Stores the shared logger instance.
-   */
   private readonly logger: Logger;
-
-  /**
-   * Stores the stdio message reader bound to the current process.
-   */
-  private readonly reader = createMessageReader(process.stdin);
-
-  /**
-   * Stores the stdio message writer bound to the current process.
-   */
-  private readonly writer = createMessageWriter(process.stdout);
+  private handle: StdioServerHandle | null = null;
 
   /**
    * Creates the stdio gateway server.
@@ -47,30 +32,29 @@ export class GatewayServer {
   }
 
   /**
-   * Starts consuming inbound MCP messages from stdin.
+   * Starts the dual-era SDK server on the current process streams.
    */
   public start(): void {
-    this.reader.on("message", (message: JsonRpcMessage) => {
-      const framingMode = this.reader.framingMode;
-      if (framingMode) {
-        this.writer.setFramingMode(framingMode);
+    if (this.handle) {
+      return;
+    }
+    this.handle = serveStdio(
+      () => createGatewayMcpServer(this.engine),
+      {
+        legacy: "serve",
+        onerror: (error) => {
+          this.logger.error("gateway.protocol_error", { message: error.message });
+        }
       }
-      void this.handleMessage(message);
-    });
-    this.reader.on("error", (error) => {
-      this.logger.error("gateway.protocol_error", {
-        message: error instanceof Error ? error.message : String(error)
-      });
-    });
+    );
   }
 
   /**
-   * Handles one inbound MCP message.
+   * Stops the stdio serving entry.
    */
-  private async handleMessage(message: JsonRpcMessage): Promise<void> {
-    const response = await this.engine.handleMessage(message);
-    if (response) {
-      this.writer.write(response);
-    }
+  public async stop(): Promise<void> {
+    const handle = this.handle;
+    this.handle = null;
+    await handle?.close();
   }
 }
