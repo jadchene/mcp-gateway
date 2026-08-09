@@ -71,6 +71,7 @@ mcp-gateway-service --http --config ./config.json
 ```
 
 默认地址为 `http://127.0.0.1:3000/mcp`。
+HTTP 默认隐藏 `gateway_manage_service`。监听非回环地址时，必须通过 `MCP_GATEWAY_AUTH_TOKEN` 配置 Bearer Token。
 
 Codex `config.toml`：
 
@@ -96,6 +97,9 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 | `--host <host>` | HTTP 监听地址。 | `127.0.0.1` |
 | `--port <port>` | HTTP 监听端口。 | `3000` |
 | `--path <path>` | HTTP endpoint 路径。 | `/mcp` |
+| `--auth-token-env <名称>` | 保存 HTTP Bearer Token 的环境变量名。 | `MCP_GATEWAY_AUTH_TOKEN` |
+| `--http-admin-tools` | 在已认证 HTTP 入口暴露 `gateway_manage_service`。 | 不启用 |
+| `--max-concurrent-requests <数量>` | HTTP 并发请求上限。 | `64` |
 | `--version`、`-v` | 输出已安装版本。 | — |
 
 启用 `--http` 后，stdio 入口仍然可用。
@@ -137,15 +141,19 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 | `name` | 必填，服务名称。 |
 | `description` | 可选，服务说明。 |
 | `enable` | 可选，默认为 `true`。 |
+| `callTimeoutMs` | 可选，下游工具调用超时；默认 120 秒。 |
 | `transport.type` | `stdio` 或 `http`。 |
 | `transport.command` | stdio 服务必填，启动命令。 |
 | `transport.args` | stdio 服务的可选命令参数。 |
 | `transport.cwd` | stdio 服务的可选工作目录。 |
 | `transport.env` | stdio 服务的可选环境变量。 |
+| `transport.inheritEnv` | 是否继承网关完整环境；默认为 `false`。 |
+| `transport.envAllowlist` | 额外传递给 stdio 服务的进程环境变量名。 |
 | `transport.url` | HTTP 服务必填，Streamable HTTP 地址。 |
 | `transport.headers` | HTTP 服务的可选静态请求头。 |
 | `logging.enable` | 是否写入文件日志，默认为 `false`。 |
 | `logging.path` | 日志文件路径；相对路径按配置文件目录解析。 |
+| `logging.maxBytes` | 当前日志轮转前的大小上限；默认 10 MiB。 |
 
 网关会监听配置文件变化。配置有误时不会替换当前配置，服务继续按最后一次有效配置运行。其他示例见 [config.example.json](./config.example.json)。
 
@@ -162,7 +170,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 
 通常按 `gateway_list_services` → `gateway_list_tools` → 按需调用 `gateway_get_tool_schema` → `gateway_call_tool` 的顺序使用。下游工具没有参数时，`gateway_call_tool` 的 `arguments` 传 `{}`。
 
-工具调用会保留下游工具原有的副作用和确认规则。通过 `gateway_manage_service` 启用或禁用服务会修改配置文件。
+工具调用会保留下游工具原有的副作用和确认规则。状态不确定的 `gateway_call_tool` 失败不会自动重放。通过 `gateway_manage_service` 启用或禁用服务会原子更新配置文件。
 
 支持 Skills 的 Agent 可以使用仓库内置的 [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) 完成工具发现和调用。
 

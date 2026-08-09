@@ -71,6 +71,7 @@ mcp-gateway-service --http --config ./config.json
 ```
 
 The default endpoint is `http://127.0.0.1:3000/mcp`.
+HTTP hides `gateway_manage_service` by default. Non-loopback binds require a bearer token in `MCP_GATEWAY_AUTH_TOKEN`.
 
 Codex `config.toml`:
 
@@ -96,6 +97,9 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 | `--host <host>` | HTTP bind address. | `127.0.0.1` |
 | `--port <port>` | HTTP port. | `3000` |
 | `--path <path>` | HTTP endpoint path. | `/mcp` |
+| `--auth-token-env <name>` | Environment variable containing the HTTP bearer token. | `MCP_GATEWAY_AUTH_TOKEN` |
+| `--http-admin-tools` | Exposes `gateway_manage_service` over authenticated HTTP. | Disabled |
+| `--max-concurrent-requests <n>` | Bounds in-flight HTTP requests. | `64` |
 | `--version`, `-v` | Prints the installed version. | — |
 
 Stdio remains available when `--http` is enabled.
@@ -137,15 +141,19 @@ Stdio remains available when `--http` is enabled.
 | `name` | Required display name. |
 | `description` | Optional service description. |
 | `enable` | Optional; defaults to `true`. |
+| `callTimeoutMs` | Optional downstream tool-call timeout; defaults to 120 seconds. |
 | `transport.type` | `stdio` or `http`. |
 | `transport.command` | Required command for a stdio service. |
 | `transport.args` | Optional command arguments for a stdio service. |
 | `transport.cwd` | Optional working directory for a stdio service. |
 | `transport.env` | Optional environment variables for a stdio service. |
+| `transport.inheritEnv` | Opts into inheriting the complete gateway environment; defaults to `false`. |
+| `transport.envAllowlist` | Additional process environment names passed to stdio services. |
 | `transport.url` | Required Streamable HTTP URL for an HTTP service. |
 | `transport.headers` | Optional static headers for an HTTP service. |
 | `logging.enable` | Enables file logging; defaults to `false`. |
 | `logging.path` | Log file path. Relative paths use the config file directory. |
+| `logging.maxBytes` | Active log size before rotation; defaults to 10 MiB. |
 
 The config file is watched for changes. Invalid updates are rejected and the last valid config stays active. See [config.example.json](./config.example.json) for another example.
 
@@ -162,7 +170,7 @@ The config file is watched for changes. Invalid updates are rejected and the las
 
 The usual flow is `gateway_list_services` → `gateway_list_tools` → `gateway_get_tool_schema` when needed → `gateway_call_tool`. Pass `{}` to `gateway_call_tool` when the downstream tool has no arguments.
 
-Calls keep the downstream tool's original side effects and confirmation rules. Enabling or disabling a service with `gateway_manage_service` updates the config file.
+Calls keep the downstream tool's original side effects and confirmation rules. An uncertain `gateway_call_tool` failure is never replayed automatically. Enabling or disabling a service with `gateway_manage_service` atomically updates the config file.
 
 Agents with Skills support can use the included [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) for the discovery and calling workflow.
 

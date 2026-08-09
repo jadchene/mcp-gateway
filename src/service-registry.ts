@@ -1,5 +1,6 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { ConfigLoader } from "./config.ts";
 import { Logger } from "./logger.ts";
 import { StdioMcpClient } from "./mcp/client.ts";
@@ -53,6 +54,8 @@ export class ServiceRegistry {
    */
   private reloadPromise: Promise<void> = Promise.resolve();
 
+  private managementPromise: Promise<void> = Promise.resolve();
+
   /**
    * Creates a registry bound to one config file path.
    */
@@ -70,13 +73,28 @@ export class ServiceRegistry {
    * Loads the initial config snapshot.
    */
   public async initialize(): Promise<void> {
-    await this.reload();
+    await this.reloadStrict();
   }
 
   /**
    * Reloads the config file and atomically swaps the runtime snapshot on success.
    */
   public async reload(): Promise<void> {
+    try {
+      await this.reloadStrict();
+    } catch (error) {
+      this.logger.error("config.reload.failed", {
+        configPath: resolve(this.configPath),
+        message: error instanceof Error ? error.message : String(error)
+      });
+      await this.logger.flush();
+    }
+  }
+
+  /**
+   * Serializes reloads and lets startup and management callers observe failures.
+   */
+  private async reloadStrict(): Promise<void> {
     this.reloadPromise = this.reloadPromise.catch(() => undefined).then(async () => {
       const absolutePath = resolve(this.configPath);
       this.logger.info("config.reload.started", { configPath: absolutePath });
@@ -96,28 +114,24 @@ export class ServiceRegistry {
           configPath: absolutePath,
           message: error instanceof Error ? error.message : String(error)
         });
-        await disposeClientMap(nextClients);
+        await disposeNewClients(this.clients, nextClients);
         throw error;
       }
 
-      await disposeRemovedClients(this.clients, nextClients);
+      const previousClients = this.clients;
       this.currentConfig = nextConfig;
       this.snapshots = nextSnapshots;
       this.clients = nextClients;
+      await disposeRemovedClients(previousClients, nextClients);
 
       this.logger.info("config.reload.succeeded", {
         configPath: absolutePath,
         serviceCount: nextConfig.services.length
       });
+      await this.logger.flush();
     });
 
-    try {
-      await this.reloadPromise;
-    } catch {
-      /**
-       * Keeps the last valid snapshot active while surfacing the error through logs.
-       */
-    }
+    await this.reloadPromise;
   }
 
   /**
@@ -279,26 +293,38 @@ export class ServiceRegistry {
    * Persists the service enable flag to the config file and reloads the registry.
    */
   private async setServiceEnabled(serviceId: string, enabled: boolean): Promise<ManageServiceResult> {
-    const rawConfig = await readRawConfig(this.configPath);
-    if (!Array.isArray(rawConfig.services)) {
-      throw new Error("The 'services' field must be an array.");
-    }
+    let result!: ManageServiceResult;
+    const operation = this.managementPromise.catch(() => undefined).then(async () => {
+      const { config: rawConfig, rawText: original } = await readRawConfig(this.configPath);
+      if (!Array.isArray(rawConfig.services)) {
+        throw new Error("The 'services' field must be an array.");
+      }
 
-    const service = rawConfig.services.find((candidate) => isRecord(candidate) && candidate.serviceId === serviceId);
-    if (!service || !isRecord(service)) {
-      throw new Error(`Unknown service '${serviceId}'.`);
-    }
+      const service = rawConfig.services.find((candidate) => isRecord(candidate) && candidate.serviceId === serviceId);
+      if (!service || !isRecord(service)) {
+        throw new Error(`Unknown service '${serviceId}'.`);
+      }
 
-    service.enable = enabled;
-    await writeFile(resolve(this.configPath), `${JSON.stringify(rawConfig, null, 2)}\n`, "utf8");
-    await this.reload();
+      service.enable = enabled;
+      const absolutePath = resolve(this.configPath);
+      await writeFileAtomically(absolutePath, `${JSON.stringify(rawConfig, null, 2)}\n`);
+      try {
+        await this.reloadStrict();
+      } catch (error) {
+        await writeFileAtomically(absolutePath, original);
+        throw error;
+      }
 
-    return {
-      serviceId,
-      action: enabled ? "enable" : "disable",
-      enabled,
-      available: enabled ? (this.getService(serviceId)?.runtime.available ?? false) : false
-    };
+      result = {
+        serviceId,
+        action: enabled ? "enable" : "disable",
+        enabled,
+        available: enabled ? (this.getService(serviceId)?.runtime.available ?? false) : false
+      };
+    });
+    this.managementPromise = operation;
+    await operation;
+    return result;
   }
 
   /**
@@ -454,6 +480,14 @@ async function disposeRemovedClients(previous: Map<string, McpClient>, next: Map
   await Promise.all(removed.map((client) => client.dispose().catch(() => undefined)));
 }
 
+/** Disposes only clients created by a failed reload, preserving reused active clients. */
+async function disposeNewClients(previous: Map<string, McpClient>, next: Map<string, McpClient>): Promise<void> {
+  const created = [...next.entries()]
+    .filter(([key, client]) => previous.get(key) !== client)
+    .map(([, client]) => client);
+  await Promise.all(created.map((client) => client.dispose().catch(() => undefined)));
+}
+
 /**
  * Creates a downstream client implementation for one service config.
  */
@@ -484,13 +518,44 @@ function normalizeKeywords(input: string[] | undefined): string[] {
 /**
  * Loads the raw config document for management edits that must preserve disabled services.
  */
-async function readRawConfig(configPath: string): Promise<Record<string, unknown>> {
+async function readRawConfig(configPath: string): Promise<{
+  config: Record<string, unknown>;
+  rawText: string;
+}> {
   const rawText = await readFile(resolve(configPath), "utf8");
   const parsed = JSON.parse(rawText) as unknown;
   if (!isRecord(parsed)) {
     throw new Error("The gateway config must be a JSON object.");
   }
-  return parsed;
+  return { config: parsed, rawText };
+}
+
+/**
+ * Replaces a config file through a flushed same-directory temporary file.
+ */
+async function writeFileAtomically(path: string, content: string): Promise<void> {
+  const tempPath = resolve(dirname(path), `.${randomUUID()}.tmp`);
+  try {
+    await writeFile(tempPath, content, { encoding: "utf8", mode: 0o600 });
+    const handle = await open(tempPath, "r");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(tempPath, path);
+    const directory = await open(dirname(path), "r").catch(() => null);
+    if (directory) {
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    }
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
 }
 
 /**

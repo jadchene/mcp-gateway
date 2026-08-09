@@ -19,6 +19,9 @@ import { SUPPORTED_MCP_PROTOCOL_VERSIONS } from "./versions.ts";
 
 const MAX_RESTART_ATTEMPTS = 3;
 const CONNECT_TIMEOUT_MS = 30_000;
+const DEFAULT_CALL_TIMEOUT_MS = 120_000;
+const MAX_DOWNSTREAM_TOOLS = 5_000;
+const MAX_TOOL_CATALOG_BYTES = 5 * 1024 * 1024;
 
 /**
  * Creates one fresh SDK transport for a downstream connection attempt.
@@ -149,7 +152,7 @@ export class SdkMcpClient implements McpClient {
     args: Record<string, unknown>,
     context: DownstreamCallContext = {}
   ): Promise<CallToolResult | InputRequiredResult> {
-    return this.executeWithRecovery(async () => {
+    try {
       const client = await this.requireClient();
       const params: CallToolRequestParams = {
         name,
@@ -158,8 +161,9 @@ export class SdkMcpClient implements McpClient {
         ...(context.requestState ? { requestState: context.requestState } : {})
       };
       const invoke = async (signal: AbortSignal): Promise<CallToolResult | InputRequiredResult> => {
+        const callSignal = combineWithTimeout(signal, this.service.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS);
         const result = await client.callTool(params, {
-          signal,
+          signal: callSignal,
           allowInputRequired: true,
           toolDefinition: this.tools.get(name)
         });
@@ -170,7 +174,17 @@ export class SdkMcpClient implements McpClient {
       }
       const result = await invoke(context.signal ?? new AbortController().signal);
       return result as CallToolResult | InputRequiredResult;
-    });
+    } catch (error) {
+      const normalized = normalizeError(error);
+      if (isNonRetryable(normalized) || context.signal?.aborted) {
+        throw normalized;
+      }
+      await this.disposeConnection();
+      throw new Error(
+        `Downstream tool '${name}' failed; execution status is unknown and the gateway did not replay it. ${normalized.message}`,
+        { cause: normalized }
+      );
+    }
   }
 
   /**
@@ -245,6 +259,12 @@ export class SdkMcpClient implements McpClient {
    */
   private async requestToolsList(client: Client): Promise<ToolDefinition[]> {
     const result = await client.listTools();
+    if (result.tools.length > MAX_DOWNSTREAM_TOOLS) {
+      throw new ResourceLimitError(`Service '${this.key}' returned more than ${MAX_DOWNSTREAM_TOOLS} tools.`);
+    }
+    if (Buffer.byteLength(JSON.stringify(result.tools), "utf8") > MAX_TOOL_CATALOG_BYTES) {
+      throw new ResourceLimitError(`Service '${this.key}' returned a tool catalog larger than ${MAX_TOOL_CATALOG_BYTES} bytes.`);
+    }
     this.tools = new Map(result.tools.map((tool) => [tool.name, tool]));
     return result.tools.map(normalizeToolDefinition);
   }
@@ -319,15 +339,24 @@ function toJsonObject(input: Record<string, unknown> | undefined): Record<string
  * Prevents protocol and explicit HTTP failures from being disguised as reconnects.
  */
 function isNonRetryable(error: Error): boolean {
-  if (error instanceof ProtocolError) {
+  if (error instanceof ProtocolError || error instanceof ResourceLimitError) {
     return true;
   }
   return error instanceof SdkHttpError && error.status >= 400 && error.status < 500;
 }
+
+class ResourceLimitError extends Error {}
 
 /**
  * Normalizes unknown thrown values into Error instances.
  */
 function normalizeError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+/**
+ * Applies the configured deadline while preserving caller cancellation.
+ */
+function combineWithTimeout(signal: AbortSignal, timeoutMs: number): AbortSignal {
+  return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
 }

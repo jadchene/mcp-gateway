@@ -16,8 +16,18 @@ const INPUT_RESPONSE_KEY = "form";
  * Serializes 2025-era downstream calls and bridges their push-style form elicitation.
  */
 export class FormElicitationBridge {
-  private readonly mutex = new AsyncMutex();
+  private readonly mutex: AsyncMutex;
+  private readonly continuationTtlMs: number;
   private activeCall: ActiveCall | null = null;
+
+  public constructor(options: {
+    continuationTtlMs?: number;
+    maxQueueSize?: number;
+    queueTimeoutMs?: number;
+  } = {}) {
+    this.continuationTtlMs = options.continuationTtlMs ?? 10 * 60_000;
+    this.mutex = new AsyncMutex(options.maxQueueSize ?? 32, options.queueTimeoutMs ?? 30_000);
+  }
 
   /**
    * Executes or resumes one 2025-era downstream tool call.
@@ -113,6 +123,10 @@ export class FormElicitationBridge {
         "Form elicitation retry does not match the original downstream tool call."
       );
     }
+    if (state.expiryTimer) {
+      clearTimeout(state.expiryTimer);
+      state.expiryTimer = null;
+    }
 
     const pending = state.pendingElicitation;
     if (pending && Object.hasOwn(context.inputResponses ?? {}, INPUT_RESPONSE_KEY)) {
@@ -150,6 +164,15 @@ export class FormElicitationBridge {
       }
 
       state.parked = true;
+      state.expiryTimer = setTimeout(() => {
+        const reason = new Error("Form elicitation state expired before it was resumed.");
+        state.outcome = { status: "rejected", error: reason };
+        state.abortController.abort(reason);
+        state.pendingElicitation?.response.reject(reason);
+        notifyStateChanged(state);
+        this.release(state);
+      }, this.continuationTtlMs);
+      state.expiryTimer.unref();
       return buildInputRequiredResult(state);
     } finally {
       detachAbort();
@@ -185,6 +208,10 @@ export class FormElicitationBridge {
       return;
     }
     state.released = true;
+    if (state.expiryTimer) {
+      clearTimeout(state.expiryTimer);
+      state.expiryTimer = null;
+    }
     state.pendingElicitation = null;
     if (this.activeCall === state) {
       this.activeCall = null;
@@ -205,6 +232,7 @@ interface ActiveCall {
   pendingElicitation: PendingElicitation | null;
   outcome: CallOutcome | null;
   changed: Deferred<void>;
+  expiryTimer: NodeJS.Timeout | null;
 }
 
 interface PendingElicitation {
@@ -228,6 +256,13 @@ interface Deferred<T> {
 class AsyncMutex {
   private locked = false;
   private readonly queue: MutexWaiter[] = [];
+  private readonly maxQueueSize: number;
+  private readonly queueTimeoutMs: number;
+
+  public constructor(maxQueueSize: number, queueTimeoutMs: number) {
+    this.maxQueueSize = maxQueueSize;
+    this.queueTimeoutMs = queueTimeoutMs;
+  }
 
   /**
    * Acquires the lock and returns an idempotent release callback.
@@ -240,14 +275,31 @@ class AsyncMutex {
       this.locked = true;
       return createRelease(() => this.releaseNext());
     }
+    if (this.queue.length >= this.maxQueueSize) {
+      throw new Error(`Legacy form-elicitation queue is full (${this.maxQueueSize} waiting calls).`);
+    }
 
     return new Promise<() => void>((resolve, reject) => {
       const waiter: MutexWaiter = { resolve, reject, signal };
+      waiter.timer = setTimeout(() => {
+        const index = this.queue.indexOf(waiter);
+        if (index >= 0) {
+          this.queue.splice(index, 1);
+        }
+        if (waiter.abort && waiter.signal) {
+          waiter.signal.removeEventListener("abort", waiter.abort);
+        }
+        reject(new Error("Timed out waiting for the legacy form-elicitation queue."));
+      }, this.queueTimeoutMs);
+      waiter.timer.unref();
       if (signal) {
         waiter.abort = () => {
           const index = this.queue.indexOf(waiter);
           if (index >= 0) {
             this.queue.splice(index, 1);
+          }
+          if (waiter.timer) {
+            clearTimeout(waiter.timer);
           }
           reject(abortReason(signal));
         };
@@ -269,6 +321,9 @@ class AsyncMutex {
     if (waiter.abort && waiter.signal) {
       waiter.signal.removeEventListener("abort", waiter.abort);
     }
+    if (waiter.timer) {
+      clearTimeout(waiter.timer);
+    }
     waiter.resolve(createRelease(() => this.releaseNext()));
   }
 }
@@ -278,6 +333,7 @@ interface MutexWaiter {
   reject: (reason: unknown) => void;
   signal?: AbortSignal;
   abort?: () => void;
+  timer?: NodeJS.Timeout;
 }
 
 /**
@@ -300,7 +356,8 @@ function createActiveCall(
     abortController: new AbortController(),
     pendingElicitation: null,
     outcome: null,
-    changed: createDeferred<void>()
+    changed: createDeferred<void>(),
+    expiryTimer: null
   };
 }
 

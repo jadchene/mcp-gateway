@@ -165,9 +165,9 @@ export class McpGatewayEngine {
 /**
  * Builds the fixed gateway tool definitions exposed to all MCP clients.
  */
-export function buildGatewayTools(): GatewayToolDefinition[] {
+export function buildGatewayTools(options: { includeAdminTools?: boolean } = {}): GatewayToolDefinition[] {
   const outputSchemas = buildGatewayOutputSchemas();
-  return [
+  const tools: GatewayToolDefinition[] = [
     {
       name: "gateway_list_services",
       description: "Lists downstream MCP services with their logical identifiers, descriptions, and current availability.",
@@ -235,6 +235,9 @@ export function buildGatewayTools(): GatewayToolDefinition[] {
       })
     }
   ];
+  return options.includeAdminTools === false
+    ? tools.filter((tool) => tool.name !== "gateway_manage_service")
+    : tools;
 }
 
 /**

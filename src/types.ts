@@ -42,6 +42,18 @@ export interface GatewayServerConfig {
    * Provides the single MCP endpoint path.
    */
   path: string;
+  /**
+   * Provides an optional bearer token required by every HTTP request.
+   */
+  authToken?: string;
+  /**
+   * Exposes persistent service-management tools over HTTP when explicitly enabled.
+   */
+  enableAdminTools?: boolean;
+  /**
+   * Limits concurrently processed HTTP requests.
+   */
+  maxConcurrentRequests?: number;
 }
 
 /**
@@ -56,6 +68,10 @@ export interface LoggingConfig {
    * Provides the absolute file path used for log appends when logging is enabled.
    */
   path: string | null;
+  /**
+   * Rotates the active log after it reaches this many bytes.
+   */
+  maxBytes?: number;
 }
 
 /**
@@ -82,6 +98,10 @@ export interface ServiceConfig {
    * Describes how the gateway connects to the downstream process.
    */
   transport: TransportConfig;
+  /**
+   * Limits one downstream tool invocation independently of connection setup.
+   */
+  callTimeoutMs?: number;
 }
 
 /**
@@ -108,6 +128,14 @@ export interface StdioTransportConfig {
    * Provides environment variables merged into the current process environment.
    */
   env?: Record<string, string>;
+  /**
+   * Inherits the complete gateway process environment only when explicitly enabled.
+   */
+  inheritEnv?: boolean;
+  /**
+   * Adds selected process environment variables to the safe platform defaults.
+   */
+  envAllowlist?: string[];
 }
 
 /**

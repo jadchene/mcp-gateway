@@ -23,7 +23,7 @@ class Application {
   /**
    * Stores a shared logger instance.
    */
-  private readonly logger = new Logger();
+  private readonly logger = new Logger(true);
 
   /**
    * Stores the config file path in use for the current process.
@@ -128,12 +128,12 @@ class Application {
 }
 
 if (import.meta.main) {
-  const application = new Application();
-
   if (process.argv.includes("-v") || process.argv.includes("--version")) {
     process.stdout.write(`${VERSION}\n`);
     process.exit(0);
   }
+
+  const application = new Application();
 
   void application.start().catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -151,6 +151,15 @@ export function parseCliArgs(args: string[]): CliOptions {
   const host = readOption(args, "--host");
   const path = readHttpPathOption(args);
   const enableHttp = args.includes("--http");
+  const enableAdminTools = args.includes("--http-admin-tools");
+  const authTokenEnv = readOption(args, "--auth-token-env") ?? "MCP_GATEWAY_AUTH_TOKEN";
+  const maxConcurrentRequests = readIntegerOption(args, "--max-concurrent-requests", 10_000);
+  validateCliArgs(args);
+  if (!enableHttp && (
+    host || port || path || enableAdminTools || maxConcurrentRequests || args.includes("--auth-token-env")
+  )) {
+    throw new Error("HTTP options require --http.");
+  }
   return {
     configPath,
     server: enableHttp
@@ -158,7 +167,10 @@ export function parseCliArgs(args: string[]): CliOptions {
           enable: true,
           host: host ?? "127.0.0.1",
           port: port ?? 3000,
-          path: path ?? "/mcp"
+          path: path ?? "/mcp",
+          authToken: process.env[authTokenEnv],
+          enableAdminTools,
+          maxConcurrentRequests: maxConcurrentRequests ?? 64
         }
       : undefined
   };
@@ -178,16 +190,42 @@ function readOption(args: string[], name: string): string | undefined {
 /**
  * Reads an integer option from argv.
  */
-function readIntegerOption(args: string[], name: string): number | undefined {
+function readIntegerOption(args: string[], name: string, maximum = 65_535): number | undefined {
   const value = readOption(args, name);
   if (value === undefined) {
     return undefined;
   }
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
-    throw new Error(`${name} must be an integer from 1 to 65535.`);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > maximum) {
+    throw new Error(`${name} must be an integer from 1 to ${maximum}.`);
   }
   return parsed;
+}
+
+/**
+ * Rejects unknown flags, duplicate options, and missing option values.
+ */
+function validateCliArgs(args: string[]): void {
+  const switches = new Set(["--http", "--http-admin-tools", "-v", "--version"]);
+  const valued = new Set(["--config", "--port", "--host", "--path", "--auth-token-env", "--max-concurrent-requests"]);
+  const seen = new Set<string>();
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] as string;
+    if (!switches.has(arg) && !valued.has(arg)) {
+      throw new Error(`Unknown option '${arg}'.`);
+    }
+    if (seen.has(arg)) {
+      throw new Error(`Option '${arg}' was provided more than once.`);
+    }
+    seen.add(arg);
+    if (valued.has(arg)) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error(`Option '${arg}' requires a value.`);
+      }
+      index += 1;
+    }
+  }
 }
 
 /**

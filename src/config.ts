@@ -8,6 +8,9 @@ import type {
   TransportConfig
 } from "./types.ts";
 
+const DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024;
+const MAX_SERVICES = 128;
+
 /**
  * Provides config loading and validation for the gateway service pool definition.
  */
@@ -34,6 +37,9 @@ export function validateGatewayConfig(input: unknown, baseDir = process.cwd()): 
   if (!Array.isArray(input.services)) {
     throw new Error("The 'services' field must be an array.");
   }
+  if (input.services.length > MAX_SERVICES) {
+    throw new Error(`The 'services' field cannot contain more than ${MAX_SERVICES} entries.`);
+  }
 
   const services = input.services.map(validateServiceConfig);
   const seenServiceIds = new Set<string>();
@@ -58,7 +64,8 @@ function validateLoggingConfig(input: unknown, baseDir: string): LoggingConfig {
   if (input === undefined) {
     return {
       enable: false,
-      path: null
+      path: null,
+      maxBytes: DEFAULT_LOG_MAX_BYTES
     };
   }
 
@@ -68,11 +75,14 @@ function validateLoggingConfig(input: unknown, baseDir: string): LoggingConfig {
 
   const enable = optionalBoolean(input.enable, "logging.enable") ?? false;
   const path = optionalString(input.path, "logging.path");
+  const maxBytes = optionalInteger(input.maxBytes, "logging.maxBytes", 1024, Number.MAX_SAFE_INTEGER)
+    ?? DEFAULT_LOG_MAX_BYTES;
 
   if (!enable) {
     return {
       enable: false,
-      path: path ? resolve(baseDir, path) : null
+      path: path ? resolve(baseDir, path) : null,
+      maxBytes
     };
   }
 
@@ -82,7 +92,8 @@ function validateLoggingConfig(input: unknown, baseDir: string): LoggingConfig {
 
   return {
     enable: true,
-    path: resolve(baseDir, path)
+    path: resolve(baseDir, path),
+    maxBytes
   };
 }
 
@@ -98,13 +109,20 @@ function validateServiceConfig(input: unknown): ServiceConfig {
   const enable = optionalBoolean(input.enable, `service '${serviceId}' enable`) ?? true;
   const name = requireNonEmptyString(input.name, `service '${serviceId}' name`);
   const description = optionalString(input.description, `service '${serviceId}' description`);
+  const callTimeoutMs = optionalInteger(
+    input.callTimeoutMs,
+    `service '${serviceId}' callTimeoutMs`,
+    1,
+    24 * 60 * 60 * 1000
+  );
 
   return {
     serviceId,
     enable,
     name,
     description,
-    transport: validateTransportConfig(serviceId, input.transport)
+    transport: validateTransportConfig(serviceId, input.transport),
+    ...(callTimeoutMs === undefined ? {} : { callTimeoutMs })
   };
 }
 
@@ -129,6 +147,11 @@ function validateTransportConfig(serviceId: string, input: unknown): TransportCo
   const args = optionalStringArray(input.args, `service '${serviceId}' transport.args`);
   const cwd = optionalString(input.cwd, `service '${serviceId}' transport.cwd`);
   const env = optionalStringRecord(input.env, `service '${serviceId}' transport.env`);
+  const inheritEnv = optionalBoolean(input.inheritEnv, `service '${serviceId}' transport.inheritEnv`);
+  const envAllowlist = optionalUniqueStringArray(
+    input.envAllowlist,
+    `service '${serviceId}' transport.envAllowlist`
+  );
   if (input.protocolMode !== undefined) {
     throw new Error(`Service '${serviceId}' transport.protocolMode is no longer supported; protocol negotiation is automatic.`);
   }
@@ -141,7 +164,9 @@ function validateTransportConfig(serviceId: string, input: unknown): TransportCo
     command,
     args,
     cwd,
-    env
+    env,
+    ...(inheritEnv === undefined ? {} : { inheritEnv }),
+    ...(envAllowlist === undefined ? {} : { envAllowlist })
   };
 }
 
@@ -247,4 +272,34 @@ function optionalStringRecord(input: unknown, label: string): Record<string, str
   }
 
   return Object.fromEntries(entries) as Record<string, string>;
+}
+
+/**
+ * Reads an optional bounded integer.
+ */
+function optionalInteger(input: unknown, label: string, minimum: number, maximum: number): number | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(input) || (input as number) < minimum || (input as number) > maximum) {
+    throw new Error(`The '${label}' field must be an integer from ${minimum} to ${maximum}.`);
+  }
+  return input as number;
+}
+
+/**
+ * Reads an optional unique array of non-empty strings.
+ */
+function optionalUniqueStringArray(input: unknown, label: string): string[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (
+    !Array.isArray(input)
+    || input.some((value) => typeof value !== "string" || value.trim() === "")
+    || new Set(input).size !== input.length
+  ) {
+    throw new Error(`The '${label}' field must be an array of unique non-empty strings.`);
+  }
+  return input;
 }

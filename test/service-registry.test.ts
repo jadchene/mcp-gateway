@@ -7,6 +7,14 @@ import { ConfigLoader } from "../src/config.ts";
 import { Logger } from "../src/logger.ts";
 import { ServiceRegistry } from "../src/service-registry.ts";
 
+test("ServiceRegistry surfaces an invalid initial config", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
+  const configPath = join(tempDir, "config.json");
+  await writeFile(configPath, "{ invalid", "utf8");
+  const registry = new ServiceRegistry(configPath, new ConfigLoader(), new Logger());
+  await assert.rejects(registry.initialize(), /JSON/);
+});
+
 test("ServiceRegistry loads metadata and routes downstream tool calls", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
   const configPath = join(tempDir, "config.json");

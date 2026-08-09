@@ -31,6 +31,7 @@ test("Logger writes JSON lines to the configured file", async () => {
     path: logPath
   });
   logger.warn("gateway.test", { value: 1 });
+  await logger.flush();
 
   const content = await readFile(logPath, "utf8");
   const entries = content.trim().split(/\r?\n/).map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -39,4 +40,16 @@ test("Logger writes JSON lines to the configured file", async () => {
   assert.equal(entries[0]?.level, "warn");
   assert.equal(entries[0]?.event, "gateway.test");
   assert.equal(entries[0]?.value, 1);
+});
+
+test("Logger redacts secrets and truncates attacker-controlled strings", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-logger-"));
+  const logPath = join(tempDir, "gateway.log");
+  const logger = new Logger();
+  logger.configure({ enable: true, path: logPath, maxBytes: 50_000 });
+  logger.error("gateway.test", { authorization: "Bearer secret", message: "x".repeat(9_000) });
+  await logger.flush();
+  const entry = JSON.parse(await readFile(logPath, "utf8")) as Record<string, unknown>;
+  assert.equal(entry.authorization, "[REDACTED]");
+  assert.match(entry.message as string, /\[truncated\]$/);
 });

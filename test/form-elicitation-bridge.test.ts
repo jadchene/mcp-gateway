@@ -74,3 +74,19 @@ test("FormElicitationBridge releases a parked call after the downstream request 
 
   assert.deepEqual((await second).content, [{ type: "text", text: "second-ready" }]);
 });
+
+test("FormElicitationBridge expires parked state and frees the bounded queue", async () => {
+  const bridge = new FormElicitationBridge({ continuationTtlMs: 10, maxQueueSize: 1, queueTimeoutMs: 100 });
+  const first = await bridge.execute("first", {}, {}, async (signal) => {
+    void bridge.handle({
+      mode: "form",
+      message: "Confirm",
+      requestedSchema: { type: "object", properties: {} }
+    }, signal).catch(() => undefined);
+    return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+  });
+  assert.equal(first.resultType, "input_required");
+  await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  const next = await bridge.execute("next", {}, {}, async () => ({ content: [] }));
+  assert.deepEqual(next.content, []);
+});

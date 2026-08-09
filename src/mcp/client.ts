@@ -17,7 +17,11 @@ export class StdioMcpClient extends SdkMcpClient {
     const transport = requireStdioTransport(service);
     const commandSpec = resolveCommandSpec(transport.command, transport.args ?? []);
     const cwd = transport.cwd ? resolve(transport.cwd) : process.cwd();
-    const environment = mergeEnvironment(transport.env);
+    const environment = mergeEnvironment(
+      transport.env,
+      transport.inheritEnv ?? false,
+      transport.envAllowlist ?? []
+    );
 
     super(
       service,
@@ -189,11 +193,20 @@ function requireStdioTransport(service: ServiceConfig): StdioTransportConfig {
 }
 
 /**
- * Merges configured values into the current process environment without undefined entries.
+ * Builds a least-privilege child environment with explicit opt-in for full inheritance.
  */
-function mergeEnvironment(overrides: Record<string, string> | undefined): Record<string, string> {
-  const inherited = Object.fromEntries(
-    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
-  );
+export function mergeEnvironment(
+  overrides: Record<string, string> | undefined,
+  inheritEnv = false,
+  allowlist: string[] = []
+): Record<string, string> {
+  const safeNames = process.platform === "win32"
+    ? ["PATH", "SystemRoot", "WINDIR", "PATHEXT", "COMSPEC", "TEMP", "TMP", "USERPROFILE"]
+    : ["PATH", "HOME", "TMPDIR", "TMP", "LANG", "LC_ALL"];
+  const names = inheritEnv ? Object.keys(process.env) : [...new Set([...safeNames, ...allowlist])];
+  const inherited = Object.fromEntries(names.flatMap((name) => {
+    const value = process.env[name];
+    return value === undefined ? [] : [[name, value]];
+  }));
   return { ...inherited, ...overrides };
 }

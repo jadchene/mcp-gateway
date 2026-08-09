@@ -7,9 +7,23 @@ import test from "node:test";
 import { Logger } from "../src/logger.ts";
 import {
   StdioMcpClient,
+  mergeEnvironment,
   resolvePowerShellHost,
   resolveWindowsNpmShim
 } from "../src/mcp/client.ts";
+
+test("mergeEnvironment excludes secrets unless explicitly allowed", () => {
+  const previous = process.env.MCP_GATEWAY_TEST_SECRET;
+  process.env.MCP_GATEWAY_TEST_SECRET = "secret";
+  try {
+    assert.equal(mergeEnvironment({}).MCP_GATEWAY_TEST_SECRET, undefined);
+    assert.equal(mergeEnvironment({}, false, ["MCP_GATEWAY_TEST_SECRET"]).MCP_GATEWAY_TEST_SECRET, "secret");
+    assert.equal(mergeEnvironment({}, true).MCP_GATEWAY_TEST_SECRET, "secret");
+  } finally {
+    if (previous === undefined) delete process.env.MCP_GATEWAY_TEST_SECRET;
+    else process.env.MCP_GATEWAY_TEST_SECRET = previous;
+  }
+});
 
 test("resolvePowerShellHost prefers pwsh when both PowerShell hosts are available", () => {
   const resolved = resolvePowerShellHost((command) => command === "pwsh" || command === "powershell.exe");

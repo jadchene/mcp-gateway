@@ -8,7 +8,7 @@ test("SHUTDOWN_SIGNALS includes SIGHUP for terminal-close shutdown on Windows", 
 });
 
 test("parseCliArgs enables HTTP only when --http is present", () => {
-  assert.equal(parseCliArgs(["--config", "./config.json", "--port", "3100"]).server, undefined);
+  assert.throws(() => parseCliArgs(["--config", "./config.json", "--port", "3100"]), /require --http/);
 
   assert.deepEqual(parseCliArgs(["--http"]), {
     configPath: "config.json",
@@ -16,7 +16,10 @@ test("parseCliArgs enables HTTP only when --http is present", () => {
       enable: true,
       host: "127.0.0.1",
       port: 3000,
-      path: "/mcp"
+      path: "/mcp",
+      authToken: undefined,
+      enableAdminTools: false,
+      maxConcurrentRequests: 64
     }
   });
 
@@ -26,9 +29,17 @@ test("parseCliArgs enables HTTP only when --http is present", () => {
       enable: true,
       host: "127.0.0.1",
       port: 3100,
-      path: "/mcp"
+      path: "/mcp",
+      authToken: undefined,
+      enableAdminTools: false,
+      maxConcurrentRequests: 64
     }
   });
+});
+
+test("parseCliArgs rejects unknown and duplicate options", () => {
+  assert.throws(() => parseCliArgs(["--wat"]), /Unknown option/);
+  assert.throws(() => parseCliArgs(["--http", "--http"]), /more than once/);
 });
 
 test("parseCliArgs rejects invalid HTTP path values", () => {

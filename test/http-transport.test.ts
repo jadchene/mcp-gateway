@@ -39,7 +39,6 @@ test("StreamableHttpGatewayServer serves MCP 2026-07-28 without protocol session
         "gateway_get_service",
         "gateway_list_tools",
         "gateway_get_tool_schema",
-        "gateway_manage_service",
         "gateway_call_tool"
       ]
     );
@@ -69,6 +68,45 @@ test("StreamableHttpGatewayServer serves MCP 2026-07-28 without protocol session
   }
 });
 
+test("StreamableHttpGatewayServer enforces bearer auth and gates admin tools", async () => {
+  const server = createGatewayServer({ authToken: "test-token", enableAdminTools: true });
+  await server.start();
+  try {
+    const unauthorized = await fetch(server.url, { method: "POST", body: "{}" });
+    assert.equal(unauthorized.status, 401);
+    assert.equal(unauthorized.headers.get("www-authenticate"), "Bearer");
+
+    const client = new Client({ name: "authenticated-test", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(new URL(server.url), {
+      requestInit: { headers: { Authorization: "Bearer test-token" } }
+    });
+    await client.connect(transport);
+    assert.ok((await client.listTools()).tools.some((tool) => tool.name === "gateway_manage_service"));
+    await client.close();
+  } finally {
+    await server.stop();
+  }
+});
+
+test("StreamableHttpGatewayServer requires auth for exposed binds and admin tools", async () => {
+  const logger = new Logger();
+  const engine = new McpGatewayEngine(createRegistryStub() as never, logger);
+  await assert.rejects(
+    new StreamableHttpGatewayServer({ enable: true, host: "0.0.0.0", port: 0, path: "/mcp" }, engine, logger).start(),
+    /authentication is required/
+  );
+  await assert.rejects(
+    new StreamableHttpGatewayServer({
+      enable: true,
+      host: "127.0.0.1",
+      port: 0,
+      path: "/mcp",
+      enableAdminTools: true
+    }, engine, logger).start(),
+    /admin tools require bearer/
+  );
+});
+
 for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
   test(`StreamableHttpGatewayServer serves MCP ${protocolVersion} on the same endpoint`, async () => {
     const server = createGatewayServer();
@@ -83,7 +121,7 @@ for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
       await client.connect(transport);
       assert.equal(client.getProtocolEra(), "legacy");
       assert.equal(client.getNegotiatedProtocolVersion(), protocolVersion);
-      assert.equal((await client.listTools()).tools.length, 6);
+      assert.equal((await client.listTools()).tools.length, 5);
       const called = await client.callTool({
         name: "gateway_list_services",
         arguments: {}
@@ -271,7 +309,7 @@ test("StreamableHttpClient negotiates modern HTTP and preserves full tool metada
     const metadata = await client.getMetadata();
     assert.equal(metadata.protocolEra, "modern");
     assert.equal(metadata.protocolVersion, "2026-07-28");
-    assert.equal(metadata.tools.length, 6);
+    assert.equal(metadata.tools.length, 5);
     assert.equal(metadata.tools[0]?.name, "gateway_list_services");
     assert.equal(typeof metadata.tools[0]?.outputSchema, "object");
   } finally {
@@ -407,14 +445,18 @@ test("SDK list caching honors TTL and keeps private caches client-local", async 
   }
 });
 
-function createGatewayServer(): StreamableHttpGatewayServer {
+function createGatewayServer(overrides: Partial<{
+  authToken: string;
+  enableAdminTools: boolean;
+}> = {}): StreamableHttpGatewayServer {
   const logger = new Logger();
   const engine = new McpGatewayEngine(createRegistryStub() as never, logger);
   return new StreamableHttpGatewayServer({
     enable: true,
     host: "127.0.0.1",
     port: 0,
-    path: "/mcp"
+    path: "/mcp",
+    ...overrides
   }, engine, logger);
 }
 

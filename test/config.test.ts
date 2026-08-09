@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import { validateGatewayConfig } from "../src/config.ts";
 
 test("validateGatewayConfig accepts a minimal valid stdio config", () => {
@@ -20,7 +21,8 @@ test("validateGatewayConfig accepts a minimal valid stdio config", () => {
   assert.equal(config.services[0]?.enable, true);
   assert.deepEqual(config.logging, {
     enable: false,
-    path: null
+    path: null,
+    maxBytes: 10 * 1024 * 1024
   });
 });
 
@@ -107,10 +109,10 @@ test("validateGatewayConfig resolves an enabled log file path from the config di
         }
       }
     ]
-  }, "E:/Study/mcp-gateway");
+  }, process.cwd());
 
   assert.equal(config.logging.enable, true);
-  assert.equal(config.logging.path, "E:\\Study\\mcp-gateway\\logs\\gateway.log");
+  assert.equal(config.logging.path, resolve(process.cwd(), "logs/gateway.log"));
 });
 
 test("validateGatewayConfig rejects enabled logging without a path", () => {
@@ -228,4 +230,14 @@ test("validateGatewayConfig rejects invalid Streamable HTTP downstream settings"
       ]
     });
   }, /valid http or https URL/);
+});
+
+test("validateGatewayConfig bounds services, timeouts, and log size", () => {
+  const service = { serviceId: "demo", name: "Demo", transport: { type: "stdio", command: "node" } };
+  assert.throws(() => validateGatewayConfig({ services: Array.from({ length: 129 }, (_, index) => ({
+    ...service,
+    serviceId: `demo-${index}`
+  })) }), /more than 128/);
+  assert.throws(() => validateGatewayConfig({ services: [{ ...service, callTimeoutMs: 0 }] }), /callTimeoutMs/);
+  assert.throws(() => validateGatewayConfig({ logging: { enable: false, maxBytes: 100 }, services: [] }), /maxBytes/);
 });

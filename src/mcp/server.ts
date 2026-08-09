@@ -16,10 +16,13 @@ import type { DownstreamCallContext } from "./client-types.ts";
 import { SUPPORTED_MCP_PROTOCOL_VERSIONS } from "./versions.ts";
 
 /**
- * Creates one SDK server instance with all six stable gateway tools.
+ * Creates one SDK server instance with the selected gateway tool surface.
  */
-export function createGatewayMcpServer(engine: McpGatewayEngine): McpServer {
-  const options: ServerOptions = {
+export function createGatewayMcpServer(
+  engine: McpGatewayEngine,
+  options: { includeAdminTools?: boolean } = {}
+): McpServer {
+  const serverOptions: ServerOptions = {
     supportedProtocolVersions: [...SUPPORTED_MCP_PROTOCOL_VERSIONS],
     capabilities: {
       tools: {
@@ -40,9 +43,9 @@ export function createGatewayMcpServer(engine: McpGatewayEngine): McpServer {
       maxRounds: 8
     }
   };
-  const server = new McpServer({ name: "mcp-gateway", version: VERSION }, options);
+  const server = new McpServer({ name: "mcp-gateway", version: VERSION }, serverOptions);
 
-  for (const tool of buildGatewayTools()) {
+  for (const tool of buildGatewayTools(options)) {
     const inputSchema = fromJsonSchema<JsonObject>(tool.inputSchema as JsonSchemaType);
     const outputSchema = tool.outputSchema
       ? fromJsonSchema<unknown>(tool.outputSchema as JsonSchemaType)

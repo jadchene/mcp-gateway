@@ -1,5 +1,5 @@
 import { watch, type FSWatcher } from "node:fs";
-import { resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { Logger } from "./logger.ts";
 
 /**
@@ -36,6 +36,8 @@ export class ConfigFileWatcher {
    */
   private timer: NodeJS.Timeout | null = null;
 
+  private restartTimer: NodeJS.Timeout | null = null;
+
   /**
    * Creates a watcher bound to one config file path.
    */
@@ -60,7 +62,10 @@ export class ConfigFileWatcher {
     }
 
     const absolutePath = resolve(this.configPath);
-    this.watcher = watch(absolutePath, () => {
+    this.watcher = watch(dirname(absolutePath), (_event, filename) => {
+      if (filename && filename.toString() !== basename(absolutePath)) {
+        return;
+      }
       this.logger.info("config.file.changed", { configPath: absolutePath });
       this.scheduleReload();
     });
@@ -69,6 +74,12 @@ export class ConfigFileWatcher {
         configPath: absolutePath,
         message: error.message
       });
+      this.watcher?.close();
+      this.watcher = null;
+      this.restartTimer = setTimeout(() => {
+        this.restartTimer = null;
+        this.start();
+      }, 1_000);
     });
   }
 
@@ -79,6 +90,10 @@ export class ConfigFileWatcher {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
+    }
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
     }
     this.watcher?.close();
     this.watcher = null;
