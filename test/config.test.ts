@@ -26,6 +26,34 @@ test("validateGatewayConfig accepts a minimal valid stdio config", () => {
   });
 });
 
+test("validateGatewayConfig accepts unique confirmation-required tool names", () => {
+  const config = validateGatewayConfig({
+    services: [{
+      serviceId: "demo",
+      name: "Demo",
+      confirmationRequiredTools: ["delete_file", "deploy"],
+      transport: { type: "stdio", command: "node" }
+    }]
+  });
+
+  assert.deepEqual(config.services[0]?.confirmationRequiredTools, ["delete_file", "deploy"]);
+});
+
+test("validateGatewayConfig rejects invalid confirmation-required tool names", () => {
+  const service = {
+    serviceId: "demo",
+    name: "Demo",
+    transport: { type: "stdio", command: "node" }
+  };
+
+  for (const confirmationRequiredTools of ["delete_file", [""], ["deploy", "deploy"]]) {
+    assert.throws(
+      () => validateGatewayConfig({ services: [{ ...service, confirmationRequiredTools }] }),
+      /confirmationRequiredTools.*unique non-empty strings/
+    );
+  }
+});
+
 test("validateGatewayConfig rejects duplicate service identifiers", () => {
   assert.throws(() => {
     validateGatewayConfig({

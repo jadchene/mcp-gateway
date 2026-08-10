@@ -82,6 +82,33 @@ test("gateway proxies modern MRTR state and input responses across two tool laye
   });
 });
 
+test("gateway requires configured tool confirmation before a modern downstream call", async () => {
+  await withProxy(async ({ client }) => {
+    const call = {
+      name: "gateway_call_tool",
+      arguments: {
+        serviceId: "downstream",
+        toolName: "arbitrary_json",
+        arguments: {}
+      }
+    };
+    const first = await client.callTool(call, { allowInputRequired: true }) as unknown as InputRequiredResult;
+    assert.equal(isInputRequiredResult(first), true);
+    assert.ok(first.requestState);
+    assert.match(first.requestState, /^mcp-gateway-tool-confirmation-v1\./);
+    assert.equal(first.inputRequests?.confirm?.method, "elicitation/create");
+
+    const second = await client.callTool({
+      ...call,
+      requestState: first.requestState,
+      inputResponses: {
+        confirm: { action: "accept", content: { confirmed: true } }
+      }
+    } as unknown as CallToolRequestParams, { allowInputRequired: true }) as CallToolResult;
+    assert.deepEqual(second.structuredContent, [1, true, null, { nested: "value" }]);
+  }, () => undefined, "2026-07-28", ["arbitrary_json"]);
+});
+
 for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
   test(`MCP ${protocolVersion} legacy elicitation shorthand is normalized to elicitation.form`, () => {
     const capabilities = { elicitation: {} };
@@ -107,6 +134,22 @@ for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
         state: "downstream-state-v1"
       });
     }, protocolVersion, "2026-07-28", true);
+  });
+}
+
+for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
+  test(`MCP ${protocolVersion} upstream completes configured gateway confirmation`, async () => {
+    await withLegacyInMemoryProxy(async ({ client }) => {
+      const result = await client.callTool({
+        name: "gateway_call_tool",
+        arguments: {
+          serviceId: "downstream",
+          toolName: "mcp_2025_echo",
+          arguments: { message: "confirmed" }
+        }
+      });
+      assert.deepEqual(result.structuredContent, { echoed: "confirmed" });
+    }, protocolVersion, protocolVersion, false, ["mcp_2025_echo"]);
   });
 }
 
@@ -347,7 +390,8 @@ test("gateway propagates upstream cancellation to the active downstream HTTP cal
 async function withProxy(
   assertion: (context: { client: Client; gatewayUrl: string }) => Promise<void>,
   onDownstreamCancelled: (cancelled: boolean) => void = () => undefined,
-  downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28"
+  downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28",
+  confirmationRequiredTools: string[] = []
 ): Promise<void> {
   const downstream = downstreamProtocolVersion === "2026-07-28"
     ? await startDownstream(onDownstreamCancelled)
@@ -359,6 +403,7 @@ async function withProxy(
       {
         serviceId: "downstream",
         name: "Downstream",
+        confirmationRequiredTools,
         transport: downstream
           ? {
               type: "http",
@@ -403,7 +448,8 @@ async function withLegacyInMemoryProxy(
   assertion: (context: { client: Client }) => Promise<void>,
   protocolVersion: "2025-11-25" | "2025-06-18",
   downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28",
-  useLegacyElicitationShorthand = false
+  useLegacyElicitationShorthand = false,
+  confirmationRequiredTools: string[] = []
 ): Promise<void> {
   const downstream = downstreamProtocolVersion === "2026-07-28"
     ? await startDownstream(() => undefined)
@@ -415,6 +461,7 @@ async function withLegacyInMemoryProxy(
       {
         serviceId: "downstream",
         name: "Downstream",
+        confirmationRequiredTools,
         transport: downstream
           ? {
               type: "http",

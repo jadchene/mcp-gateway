@@ -102,6 +102,11 @@ export interface ServiceConfig {
    * Limits one downstream tool invocation independently of connection setup.
    */
   callTimeoutMs?: number;
+  /**
+   * Lists exact downstream tool names that require upstream form elicitation
+   * confirmation before the gateway invokes them.
+   */
+  confirmationRequiredTools?: string[];
 }
 
 /**

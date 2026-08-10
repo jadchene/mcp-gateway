@@ -115,6 +115,10 @@ function validateServiceConfig(input: unknown): ServiceConfig {
     1,
     24 * 60 * 60 * 1000
   );
+  const confirmationRequiredTools = optionalUniqueStringArray(
+    input.confirmationRequiredTools,
+    `service '${serviceId}' confirmationRequiredTools`
+  );
 
   return {
     serviceId,
@@ -122,7 +126,8 @@ function validateServiceConfig(input: unknown): ServiceConfig {
     name,
     description,
     transport: validateTransportConfig(serviceId, input.transport),
-    ...(callTimeoutMs === undefined ? {} : { callTimeoutMs })
+    ...(callTimeoutMs === undefined ? {} : { callTimeoutMs }),
+    ...(confirmationRequiredTools === undefined ? {} : { confirmationRequiredTools })
   };
 }
 

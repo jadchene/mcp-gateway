@@ -1,6 +1,7 @@
 import { Logger } from "./logger.ts";
 import { ServiceRegistry } from "./service-registry.ts";
 import type { DownstreamCallContext, DownstreamToolResult } from "./mcp/client-types.ts";
+import { ToolConfirmationInterceptor } from "./mcp/tool-confirmation.ts";
 import type { JsonObject, ServiceRuntimeSnapshot } from "./types.ts";
 
 /**
@@ -16,6 +17,11 @@ export class McpGatewayEngine {
    * Stores the startup barrier that must resolve before gateway tools can use the registry.
    */
   private startupBarrier: Promise<void> = Promise.resolve();
+
+  /**
+   * Stores pending and approved confirmation continuation state.
+   */
+  private readonly toolConfirmation = new ToolConfirmationInterceptor();
 
   /**
    * Creates the transport-neutral gateway engine.
@@ -142,8 +148,16 @@ export class McpGatewayEngine {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
     const toolName = requireString(args.toolName, "The 'toolName' argument must be a string.");
     const toolArgs = toObject(args.arguments, "The 'arguments' field must be an object.");
-    const call = await this.registry.callTool(serviceId, toolName, toolArgs, context);
-    return call.result;
+    const snapshot = this.registry.getService(serviceId);
+
+    const invoke = async (callContext: DownstreamCallContext): Promise<DownstreamToolResult> => {
+      const call = await this.registry.callTool(serviceId, toolName, toolArgs, callContext);
+      return call.result;
+    };
+    if (snapshot?.config.confirmationRequiredTools?.includes(toolName)) {
+      return this.toolConfirmation.execute(serviceId, toolName, toolArgs, context, invoke);
+    }
+    return invoke(context);
   }
 
   /**

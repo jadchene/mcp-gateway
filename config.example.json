@@ -11,6 +11,9 @@
       "name": "Demo Echo Service",
       "description": "Sample echo MCP service.",
       "callTimeoutMs": 120000,
+      "confirmationRequiredTools": [
+        "echo"
+      ],
       "transport": {
         "type": "stdio",
         "command": "node",
