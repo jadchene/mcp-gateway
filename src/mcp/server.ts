@@ -83,6 +83,9 @@ function toDownstreamContext(
   const clientCapabilities = isRecord(envelopeCapabilities)
     ? envelopeCapabilities
     : mcp2025ClientCapabilities;
+  if (!context.mcpReq.envelope) {
+    normalizeLegacyFormElicitationCapability(clientCapabilities);
+  }
   return {
     signal: context.mcpReq.signal,
     ...(clientCapabilities ? { clientCapabilities } : {}),
@@ -92,11 +95,28 @@ function toDownstreamContext(
       ? {
           elicitForm: (params: ElicitRequestFormParams, signal: AbortSignal) => context.mcpReq.elicitInput(
             params,
-            { signal }
+            {
+              signal,
+              relatedRequestId: context.mcpReq.id
+            }
           )
         }
       : {})
   };
+}
+
+/**
+ * MCP 2025 clients may advertise form elicitation as the legacy shorthand
+ * `elicitation: {}`. The SDK's request helper expects the later explicit
+ * `elicitation.form` shape, so normalize the negotiated capability in place.
+ */
+export function normalizeLegacyFormElicitationCapability(
+  clientCapabilities: Record<string, unknown> | undefined
+): void {
+  const elicitation = clientCapabilities?.elicitation;
+  if (isRecord(elicitation) && !("form" in elicitation)) {
+    elicitation.form = {};
+  }
 }
 
 /**

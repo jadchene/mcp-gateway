@@ -29,7 +29,10 @@ import { ConfigLoader } from "../src/config.ts";
 import { McpGatewayEngine } from "../src/gateway-engine.ts";
 import { StreamableHttpGatewayServer } from "../src/http-server.ts";
 import { Logger } from "../src/logger.ts";
-import { createGatewayMcpServer } from "../src/mcp/server.ts";
+import {
+  createGatewayMcpServer,
+  normalizeLegacyFormElicitationCapability
+} from "../src/mcp/server.ts";
 import { ServiceRegistry } from "../src/service-registry.ts";
 
 test("gateway proxies modern MRTR state and input responses across two tool layers", async () => {
@@ -80,6 +83,12 @@ test("gateway proxies modern MRTR state and input responses across two tool laye
 });
 
 for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
+  test(`MCP ${protocolVersion} legacy elicitation shorthand is normalized to elicitation.form`, () => {
+    const capabilities = { elicitation: {} };
+    normalizeLegacyFormElicitationCapability(capabilities);
+    assert.deepEqual(capabilities, { elicitation: { form: {} } });
+  });
+
   test(`MCP ${protocolVersion} upstream clients can complete MRTR against a modern downstream service`, async () => {
     const operation = `${protocolVersion}-deploy`;
     await withLegacyInMemoryProxy(async ({ client }) => {
@@ -97,7 +106,7 @@ for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
         confirmed: true,
         state: "downstream-state-v1"
       });
-    }, protocolVersion);
+    }, protocolVersion, "2026-07-28", true);
   });
 }
 
@@ -393,7 +402,8 @@ async function withProxy(
 async function withLegacyInMemoryProxy(
   assertion: (context: { client: Client }) => Promise<void>,
   protocolVersion: "2025-11-25" | "2025-06-18",
-  downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28"
+  downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28",
+  useLegacyElicitationShorthand = false
 ): Promise<void> {
   const downstream = downstreamProtocolVersion === "2026-07-28"
     ? await startDownstream(() => undefined)
@@ -421,7 +431,9 @@ async function withLegacyInMemoryProxy(
   const gatewayServer = createGatewayMcpServer(new McpGatewayEngine(registry, logger));
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: `${protocolVersion}-proxy-test`, version: "1.0.0" }, {
-    capabilities: { elicitation: { form: {} } },
+    capabilities: useLegacyElicitationShorthand
+      ? { elicitation: {} }
+      : { elicitation: { form: {} } },
     supportedProtocolVersions: [protocolVersion]
   });
   client.setRequestHandler("elicitation/create", async () => ({

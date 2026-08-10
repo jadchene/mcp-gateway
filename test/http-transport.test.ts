@@ -14,6 +14,7 @@ import { NodeStreamableHTTPServerTransport, toNodeHandler } from "@modelcontextp
 import { McpGatewayEngine } from "../src/gateway-engine.ts";
 import { StreamableHttpGatewayServer } from "../src/http-server.ts";
 import { Logger } from "../src/logger.ts";
+import type { DownstreamCallContext } from "../src/mcp/client-types.ts";
 import { StreamableHttpClient } from "../src/mcp/http-client.ts";
 import type { ServiceRuntimeSnapshot, ToolDefinition } from "../src/types.ts";
 
@@ -57,11 +58,17 @@ test("StreamableHttpGatewayServer serves MCP 2026-07-28 without protocol session
       ]
     });
 
-    const get = await fetch(server.url, { method: "GET" });
-    assert.equal(get.status, 405);
+    const get = await fetch(server.url, {
+      method: "GET",
+      headers: { Accept: "application/json, text/event-stream" }
+    });
+    assert.equal(get.status, 400);
     assert.equal(get.headers.has("mcp-session-id"), false);
-    const remove = await fetch(server.url, { method: "DELETE" });
-    assert.equal(remove.status, 405);
+    const remove = await fetch(server.url, {
+      method: "DELETE",
+      headers: { Accept: "application/json, text/event-stream" }
+    });
+    assert.equal(remove.status, 400);
   } finally {
     await client.close().catch(() => undefined);
     await server.stop();
@@ -134,6 +141,48 @@ for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
             available: true
           }
         ]
+      });
+    } finally {
+      await client.close().catch(() => undefined);
+      await server.stop();
+    }
+  });
+
+  test(`StreamableHttpGatewayServer preserves MCP ${protocolVersion} form elicitation across HTTP requests`, async () => {
+    const server = createGatewayServer({}, createElicitingRegistryStub());
+    await server.start();
+    const client = new Client(
+      { name: `http-${protocolVersion}-elicitation-test`, version: "1.0.0" },
+      {
+        capabilities: { elicitation: { form: {} } },
+        supportedProtocolVersions: [protocolVersion]
+      }
+    );
+    const transport = new StreamableHTTPClientTransport(new URL(server.url));
+    let elicitationRequests = 0;
+    client.setRequestHandler("elicitation/create", async (request) => {
+      elicitationRequests += 1;
+      assert.equal(request.params.message, `Confirm ${protocolVersion}`);
+      return {
+        action: "accept",
+        content: { confirmed: true }
+      };
+    });
+
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({
+        name: "gateway_call_tool",
+        arguments: {
+          serviceId: "demo",
+          toolName: "confirm",
+          arguments: { operation: protocolVersion }
+        }
+      });
+      assert.equal(elicitationRequests, 1);
+      assert.deepEqual(result.structuredContent, {
+        action: "accept",
+        confirmed: true
       });
     } finally {
       await client.close().catch(() => undefined);
@@ -448,9 +497,9 @@ test("SDK list caching honors TTL and keeps private caches client-local", async 
 function createGatewayServer(overrides: Partial<{
   authToken: string;
   enableAdminTools: boolean;
-}> = {}): StreamableHttpGatewayServer {
+}> = {}, registry = createRegistryStub()): StreamableHttpGatewayServer {
   const logger = new Logger();
-  const engine = new McpGatewayEngine(createRegistryStub() as never, logger);
+  const engine = new McpGatewayEngine(registry as never, logger);
   return new StreamableHttpGatewayServer({
     enable: true,
     host: "127.0.0.1",
@@ -460,12 +509,58 @@ function createGatewayServer(overrides: Partial<{
   }, engine, logger);
 }
 
+function createElicitingRegistryStub(): ReturnType<typeof createRegistryStub> {
+  return {
+    ...createRegistryStub(),
+    callTool: async (
+      _serviceId: string,
+      _toolName: string,
+      args: Record<string, unknown>,
+      context: DownstreamCallContext = {}
+    ) => {
+      assert.ok(context.elicitForm, "the upstream HTTP session must expose form elicitation");
+      const response = await context.elicitForm({
+        mode: "form",
+        message: `Confirm ${String(args.operation)}`,
+        requestedSchema: {
+          type: "object",
+          properties: { confirmed: { type: "boolean" } },
+          required: ["confirmed"]
+        }
+      }, context.signal ?? AbortSignal.timeout(5_000));
+      return {
+        result: {
+          content: [{ type: "text" as const, text: JSON.stringify(response) }],
+          structuredContent: {
+            action: response.action,
+            confirmed: response.content?.confirmed === true
+          }
+        },
+        durationMs: 0,
+        restartAttempts: 0
+      };
+    }
+  };
+}
+
 function createRegistryStub(): {
   listServices: () => ServiceRuntimeSnapshot[];
   getService: (serviceId: string) => ServiceRuntimeSnapshot | null;
   listTools: (serviceId: string) => ToolDefinition[];
   getTool: (serviceId: string, toolName: string) => ToolDefinition | null;
-  callTool: () => Promise<{ result: { content: never[] }; durationMs: number; restartAttempts: number }>;
+  callTool: (
+    serviceId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    context?: DownstreamCallContext
+  ) => Promise<{
+    result: {
+      content: Array<{ type: "text"; text: string }>;
+      structuredContent?: Record<string, unknown>;
+    };
+    durationMs: number;
+    restartAttempts: number;
+  }>;
   manageService: () => Promise<{ serviceId: string; action: "reconnect"; enabled: boolean; available: boolean }>;
 } {
   const snapshot: ServiceRuntimeSnapshot = {
