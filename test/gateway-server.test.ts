@@ -714,6 +714,45 @@ test("McpGatewayEngine rejects disabled tools before confirmation or downstream 
   assert.equal(called, false);
 });
 
+test("McpGatewayEngine resumes gateway confirmation state after a config policy reload", async () => {
+  let called = false;
+  const registry = createRegistryStub({
+    config: { confirmationRequiredTools: ["deploy"] },
+    callTool: async () => {
+      called = true;
+      return {
+        result: { content: [] },
+        durationMs: 0,
+        restartAttempts: 0
+      };
+    }
+  });
+  const engine = createGatewayEngineForTest(registry);
+  const args = {
+    serviceId: "playwright",
+    toolName: "deploy",
+    arguments: {}
+  };
+  const first = await engine.callDownstreamTool(args, {
+    clientCapabilities: { elicitation: { form: {} } }
+  }) as { requestState?: string };
+  assert.ok(first.requestState);
+
+  const snapshot = registry.getService("playwright");
+  assert.ok(snapshot);
+  snapshot.config.confirmationRequiredTools = [];
+
+  const completed = await engine.callDownstreamTool(args, {
+    clientCapabilities: { elicitation: { form: {} } },
+    requestState: first.requestState,
+    inputResponses: {
+      confirm: { action: "accept", content: { confirmed: true } }
+    }
+  });
+  assert.deepEqual(completed, { content: [] });
+  assert.equal(called, true);
+});
+
 test("McpGatewayEngine waits for the startup barrier before handling tool calls", async () => {
   let releaseBarrier: () => void = () => undefined;
   const startupBarrier = new Promise<void>((resolve) => {

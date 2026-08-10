@@ -158,7 +158,10 @@ export class McpGatewayEngine {
     if (matchesAnyToolNamePattern(toolName, snapshot?.config.disabledTools)) {
       throw new Error(`Tool '${toolName}' in service '${serviceId}' is disabled by gateway configuration.`);
     }
-    if (matchesAnyToolNamePattern(toolName, snapshot?.config.confirmationRequiredTools)) {
+    if (
+      this.toolConfirmation.handlesState(context.requestState)
+      || matchesAnyToolNamePattern(toolName, snapshot?.config.confirmationRequiredTools)
+    ) {
       return this.toolConfirmation.execute(serviceId, toolName, toolArgs, context, invoke);
     }
     return invoke(context);

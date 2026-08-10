@@ -7,17 +7,32 @@ const CONFIRMATION_STATE_PREFIX = "mcp-gateway-tool-confirmation-v1.";
 const APPROVED_STATE_PREFIX = "mcp-gateway-approved-tool-continuation-v1.";
 const CONFIRMATION_RESPONSE_KEY = "confirm";
 const DEFAULT_STATE_TTL_MS = 10 * 60_000;
+const DEFAULT_MAX_STATES = 1024;
 
 /**
  * Gates configured downstream tools behind one upstream form elicitation round.
  */
 export class ToolConfirmationInterceptor {
   private readonly stateTtlMs: number;
+  private readonly maxStates: number;
   private readonly pending = new Map<string, InvocationState>();
   private readonly approvedContinuations = new Map<string, InvocationState>();
+  private activeInvocations = 0;
 
-  public constructor(options: { stateTtlMs?: number } = {}) {
+  public constructor(options: { stateTtlMs?: number; maxStates?: number } = {}) {
     this.stateTtlMs = options.stateTtlMs ?? DEFAULT_STATE_TTL_MS;
+    this.maxStates = options.maxStates ?? DEFAULT_MAX_STATES;
+    if (!Number.isInteger(this.maxStates) || this.maxStates < 1) {
+      throw new Error("Tool confirmation maxStates must be a positive integer.");
+    }
+  }
+
+  /**
+   * Checks whether a request state belongs to this interceptor.
+   */
+  public handlesState(requestState: string | undefined): boolean {
+    return requestState?.startsWith(CONFIRMATION_STATE_PREFIX) === true
+      || requestState?.startsWith(APPROVED_STATE_PREFIX) === true;
   }
 
   /**
@@ -36,7 +51,7 @@ export class ToolConfirmationInterceptor {
       if (!approved?.downstreamRequestState) {
         throw new Error("Tool confirmation state is invalid or has expired.");
       }
-      return this.invokeAndTrack(
+      return this.invokeReserved(
         serviceId,
         toolName,
         args,
@@ -58,6 +73,9 @@ export class ToolConfirmationInterceptor {
       );
     }
 
+    if (this.stateCount() >= this.maxStates) {
+      throw new Error(`Tool confirmation state capacity of ${this.maxStates} has been reached.`);
+    }
     const state = this.createState(serviceId, toolName, args);
     this.pending.set(state.requestState, state);
     return buildConfirmationRequest(state);
@@ -84,13 +102,31 @@ export class ToolConfirmationInterceptor {
       throw new Error(`Tool '${toolName}' in service '${serviceId}' was not called because confirmation was declined.`);
     }
 
-    return this.invokeAndTrack(
+    return this.invokeReserved(
       serviceId,
       toolName,
       args,
       withoutConfirmationContinuation(context),
       invoke
     );
+  }
+
+  /**
+   * Keeps a consumed state slot reserved while a downstream round is active.
+   */
+  private async invokeReserved(
+    serviceId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    context: DownstreamCallContext,
+    invoke: (context: DownstreamCallContext) => Promise<DownstreamToolResult>
+  ): Promise<DownstreamToolResult> {
+    this.activeInvocations += 1;
+    try {
+      return await this.invokeAndTrack(serviceId, toolName, args, context, invoke);
+    } finally {
+      this.activeInvocations -= 1;
+    }
   }
 
   /**
@@ -165,6 +201,13 @@ export class ToolConfirmationInterceptor {
     states.delete(requestState);
     clearTimeout(state.expiryTimer);
     return state;
+  }
+
+  /**
+   * Counts parked and currently executing confirmation-protected invocations.
+   */
+  private stateCount(): number {
+    return this.pending.size + this.approvedContinuations.size + this.activeInvocations;
   }
 }
 

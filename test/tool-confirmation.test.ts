@@ -180,3 +180,49 @@ test("ToolConfirmationInterceptor preserves approval across downstream input-req
   assert.deepEqual(completed, { content: [{ type: "text", text: "done" }] });
   assert.equal(calls, 2);
 });
+
+test("ToolConfirmationInterceptor bounds parked confirmation state", async () => {
+  const interceptor = new ToolConfirmationInterceptor({ maxStates: 1 });
+  const first = await interceptor.execute(
+    "demo",
+    "deploy",
+    {},
+    { clientCapabilities: FORM_CAPABILITIES },
+    async () => ({ content: [] })
+  ) as InputRequiredResult;
+
+  await assert.rejects(
+    () => interceptor.execute(
+      "demo",
+      "delete_file",
+      {},
+      { clientCapabilities: FORM_CAPABILITIES },
+      async () => ({ content: [] })
+    ),
+    /state capacity of 1 has been reached/
+  );
+
+  await assert.rejects(
+    () => interceptor.execute(
+      "demo",
+      "deploy",
+      {},
+      {
+        clientCapabilities: FORM_CAPABILITIES,
+        requestState: first.requestState,
+        inputResponses: { confirm: { action: "decline" } }
+      },
+      async () => ({ content: [] })
+    ),
+    /confirmation was declined/
+  );
+
+  const next = await interceptor.execute(
+    "demo",
+    "delete_file",
+    {},
+    { clientCapabilities: FORM_CAPABILITIES },
+    async () => ({ content: [] })
+  ) as InputRequiredResult;
+  assert.equal(next.resultType, "input_required");
+});
