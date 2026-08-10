@@ -154,7 +154,7 @@ export class McpGatewayEngine {
       const call = await this.registry.callTool(serviceId, toolName, toolArgs, callContext);
       return call.result;
     };
-    if (snapshot?.config.confirmationRequiredTools?.includes(toolName)) {
+    if (snapshot?.config.confirmationRequiredTools?.some((pattern) => matchesToolNamePattern(toolName, pattern))) {
       return this.toolConfirmation.execute(serviceId, toolName, toolArgs, context, invoke);
     }
     return invoke(context);
@@ -174,6 +174,28 @@ export class McpGatewayEngine {
       available: result.available
     });
   }
+}
+
+/**
+ * Matches one complete, case-sensitive tool name against a compact glob pattern.
+ * `*` matches zero or more characters and `?` matches exactly one character.
+ */
+export function matchesToolNamePattern(toolName: string, pattern: string): boolean {
+  let expression = "^";
+  for (const character of pattern) {
+    switch (character) {
+      case "*":
+        expression += ".*";
+        break;
+      case "?":
+        expression += ".";
+        break;
+      default:
+        expression += character.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+        break;
+    }
+  }
+  return new RegExp(`${expression}$`, "u").test(toolName);
 }
 
 /**

@@ -106,7 +106,7 @@ test("gateway requires configured tool confirmation before a modern downstream c
       }
     } as unknown as CallToolRequestParams, { allowInputRequired: true }) as CallToolResult;
     assert.deepEqual(second.structuredContent, [1, true, null, { nested: "value" }]);
-  }, () => undefined, "2026-07-28", ["arbitrary_json"]);
+  }, () => undefined, "2026-07-28", ["arbitrary_*"]);
 });
 
 for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {

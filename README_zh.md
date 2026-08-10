@@ -116,7 +116,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
     {
       "serviceId": "local-tools",
       "name": "Local Tools",
-      "confirmationRequiredTools": ["delete_file", "deploy"],
+      "confirmationRequiredTools": ["delete_*", "deploy_?"],
       "transport": {
         "type": "stdio",
         "command": "your-mcp-service",
@@ -143,7 +143,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 | `description` | 可选，服务说明。 |
 | `enable` | 可选，默认为 `true`。 |
 | `callTimeoutMs` | 可选，下游工具调用超时；默认 120 秒。 |
-| `confirmationRequiredTools` | 可选，填写需要二次确认的工具名称；必须是唯一、非空且区分大小写的精确名称数组。网关在调用这些工具前会向上游用户发起表单 elicitation。 |
+| `confirmationRequiredTools` | 可选，填写区分大小写的完整工具名 glob 模式；`*` 匹配零个或多个字符，`?` 匹配一个字符。数组项必须唯一且非空，网关在调用匹配的工具前会向上游用户发起表单 elicitation。 |
 | `transport.type` | `stdio` 或 `http`。 |
 | `transport.command` | stdio 服务必填，启动命令。 |
 | `transport.args` | stdio 服务的可选命令参数。 |
@@ -172,7 +172,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 
 通常按 `gateway_list_services` → `gateway_list_tools` → 按需调用 `gateway_get_tool_schema` → `gateway_call_tool` 的顺序使用。下游工具没有参数时，`gateway_call_tool` 的 `arguments` 传 `{}`。
 
-工具调用会保留下游工具原有的副作用和确认规则。`confirmationRequiredTools` 中的工具只有在当前 MCP 会话返回“接受”且显式确认后才会调用；会话不支持表单 elicitation、用户拒绝或取消时，网关会直接返回错误且不会调用下游工具。状态不确定的 `gateway_call_tool` 失败不会自动重放。通过 `gateway_manage_service` 启用或禁用服务会原子更新配置文件。
+工具调用会保留下游工具原有的副作用和确认规则。匹配 `confirmationRequiredTools` 模式的工具只有在当前 MCP 会话返回“接受”且显式确认后才会调用；会话不支持表单 elicitation、用户拒绝或取消时，网关会直接返回错误且不会调用下游工具。状态不确定的 `gateway_call_tool` 失败不会自动重放。通过 `gateway_manage_service` 启用或禁用服务会原子更新配置文件。
 
 支持 Skills 的 Agent 可以使用仓库内置的 [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) 完成工具发现和调用。
 

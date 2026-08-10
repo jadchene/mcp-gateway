@@ -12,7 +12,7 @@
       "description": "Sample echo MCP service.",
       "callTimeoutMs": 120000,
       "confirmationRequiredTools": [
-        "echo"
+        "echo*"
       ],
       "transport": {
         "type": "stdio",

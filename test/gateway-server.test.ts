@@ -1,8 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildGatewayTools, McpGatewayEngine } from "../src/gateway-engine.ts";
+import { buildGatewayTools, matchesToolNamePattern, McpGatewayEngine } from "../src/gateway-engine.ts";
 import { Logger } from "../src/logger.ts";
 import type { ServiceRuntimeSnapshot, ToolDefinition } from "../src/types.ts";
+
+test("matchesToolNamePattern supports exact names and glob wildcards", () => {
+  assert.equal(matchesToolNamePattern("deploy", "deploy"), true);
+  assert.equal(matchesToolNamePattern("deploy_prod", "deploy*"), true);
+  assert.equal(matchesToolNamePattern("delete_file", "*_file"), true);
+  assert.equal(matchesToolNamePattern("tool_1", "tool_?"), true);
+  assert.equal(matchesToolNamePattern("tool_12", "tool_?"), false);
+  assert.equal(matchesToolNamePattern("deploy", "DEPLOY"), false);
+  assert.equal(matchesToolNamePattern("tool.name", "tool.name"), true);
+  assert.equal(matchesToolNamePattern("toolXname", "tool.name"), false);
+});
 
 test("McpGatewayEngine returns a tool-name-keyed schema payload for one tool", () => {
   const tool: ToolDefinition = {

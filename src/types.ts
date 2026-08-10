@@ -103,8 +103,8 @@ export interface ServiceConfig {
    */
   callTimeoutMs?: number;
   /**
-   * Lists exact downstream tool names that require upstream form elicitation
-   * confirmation before the gateway invokes them.
+   * Lists case-sensitive downstream tool-name glob patterns that require
+   * upstream form elicitation confirmation before the gateway invokes them.
    */
   confirmationRequiredTools?: string[];
 }
