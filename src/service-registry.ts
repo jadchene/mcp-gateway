@@ -539,17 +539,21 @@ async function writeFileAtomically(path: string, content: string): Promise<void>
     await writeFile(tempPath, content, { encoding: "utf8", mode: 0o600 });
     const handle = await open(tempPath, "r");
     try {
-      await handle.sync();
+      if (process.platform !== "win32") {
+        await handle.sync();
+      }
     } finally {
       await handle.close();
     }
     await rename(tempPath, path);
-    const directory = await open(dirname(path), "r").catch(() => null);
-    if (directory) {
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
+    if (process.platform !== "win32") {
+      const directory = await open(dirname(path), "r").catch(() => null);
+      if (directory) {
+        try {
+          await directory.sync();
+        } finally {
+          await directory.close();
+        }
       }
     }
   } catch (error) {
