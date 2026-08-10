@@ -7,6 +7,7 @@ import { StdioMcpClient } from "./mcp/client.ts";
 import type { McpClient } from "./mcp/client-types.ts";
 import type { DownstreamCallContext, DownstreamToolResult } from "./mcp/client-types.ts";
 import { StreamableHttpClient } from "./mcp/http-client.ts";
+import { matchesAnyToolNamePattern } from "./tool-name-pattern.ts";
 import type { GatewayConfig, ServiceConfig, ServiceMetadata, ServiceRuntimeSnapshot, ToolDefinition } from "./types.ts";
 
 /**
@@ -152,7 +153,10 @@ export class ServiceRegistry {
    * Lists tools for one logical service, optionally matching name or description keywords.
    */
   public listTools(serviceId: string, toolName?: string[], desc?: string[]): ToolDefinition[] {
-    const tools = this.requireService(serviceId).metadata.tools;
+    const snapshot = this.requireService(serviceId);
+    const tools = snapshot.metadata.tools.filter(
+      (tool) => !matchesAnyToolNamePattern(tool.name, snapshot.config.disabledTools)
+    );
     const nameKeywords = normalizeKeywords(toolName);
     const descriptionKeywords = normalizeKeywords(desc);
     if (nameKeywords.length === 0 && descriptionKeywords.length === 0) {
@@ -171,7 +175,11 @@ export class ServiceRegistry {
    * Returns one tool definition for a service.
    */
   public getTool(serviceId: string, toolName: string): ToolDefinition | null {
-    return this.requireService(serviceId).metadata.tools.find((tool) => tool.name === toolName) ?? null;
+    const snapshot = this.requireService(serviceId);
+    if (matchesAnyToolNamePattern(toolName, snapshot.config.disabledTools)) {
+      return null;
+    }
+    return snapshot.metadata.tools.find((tool) => tool.name === toolName) ?? null;
   }
 
   /**
@@ -184,6 +192,9 @@ export class ServiceRegistry {
     context: DownstreamCallContext = {}
   ): Promise<CallToolResult> {
     const snapshot = this.requireService(serviceId);
+    if (matchesAnyToolNamePattern(toolName, snapshot.config.disabledTools)) {
+      throw new Error(`Tool '${toolName}' in service '${serviceId}' is disabled by gateway configuration.`);
+    }
     const client = this.clients.get(serviceId);
     if (!client) {
       throw new Error(`Service '${serviceId}' is unavailable.`);

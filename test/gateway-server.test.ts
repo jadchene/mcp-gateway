@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildGatewayTools, matchesToolNamePattern, McpGatewayEngine } from "../src/gateway-engine.ts";
+import { buildGatewayTools, McpGatewayEngine } from "../src/gateway-engine.ts";
 import { Logger } from "../src/logger.ts";
+import { matchesToolNamePattern } from "../src/tool-name-pattern.ts";
 import type { ServiceRuntimeSnapshot, ToolDefinition } from "../src/types.ts";
 
 test("matchesToolNamePattern supports exact names and glob wildcards", () => {
@@ -10,6 +11,9 @@ test("matchesToolNamePattern supports exact names and glob wildcards", () => {
   assert.equal(matchesToolNamePattern("delete_file", "*_file"), true);
   assert.equal(matchesToolNamePattern("tool_1", "tool_?"), true);
   assert.equal(matchesToolNamePattern("tool_12", "tool_?"), false);
+  assert.equal(matchesToolNamePattern("tool_😀", "tool_?"), true);
+  assert.equal(matchesToolNamePattern("anything", "**"), true);
+  assert.equal(matchesToolNamePattern("", "*"), true);
   assert.equal(matchesToolNamePattern("deploy", "DEPLOY"), false);
   assert.equal(matchesToolNamePattern("tool.name", "tool.name"), true);
   assert.equal(matchesToolNamePattern("toolXname", "tool.name"), false);
@@ -682,6 +686,34 @@ test("McpGatewayEngine requires an explicit downstream arguments object", async 
   );
 });
 
+test("McpGatewayEngine rejects disabled tools before confirmation or downstream invocation", async () => {
+  let called = false;
+  const engine = createGatewayEngineForTest(createRegistryStub({
+    config: {
+      disabledTools: ["danger_*"],
+      confirmationRequiredTools: ["*"]
+    },
+    callTool: async () => {
+      called = true;
+      return {
+        result: { content: [] },
+        durationMs: 0,
+        restartAttempts: 0
+      };
+    }
+  }));
+
+  await assert.rejects(
+    () => engine.callDownstreamTool({
+      serviceId: "playwright",
+      toolName: "danger_delete",
+      arguments: {}
+    }),
+    /is disabled by gateway configuration/
+  );
+  assert.equal(called, false);
+});
+
 test("McpGatewayEngine waits for the startup barrier before handling tool calls", async () => {
   let releaseBarrier: () => void = () => undefined;
   const startupBarrier = new Promise<void>((resolve) => {
@@ -750,6 +782,7 @@ test("McpGatewayEngine exposes a compact manageService payload", async () => {
 });
 
 function createRegistryStub(overrides: {
+  config?: Partial<ServiceRuntimeSnapshot["config"]>;
   tools?: ToolDefinition[];
   callTool?: (serviceId: string, toolName: string, args: Record<string, unknown>) => Promise<{
     result: unknown;
@@ -788,7 +821,8 @@ function createRegistryStub(overrides: {
       transport: {
         type: "stdio",
         command: "node"
-      }
+      },
+      ...overrides.config
     },
     metadata: {
       protocolVersion: "2025-06-18",

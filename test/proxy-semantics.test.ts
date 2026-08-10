@@ -109,6 +109,35 @@ test("gateway requires configured tool confirmation before a modern downstream c
   }, () => undefined, "2026-07-28", ["arbitrary_*"]);
 });
 
+test("gateway hides schemas and rejects calls for configured disabled tools", async () => {
+  await withProxy(async ({ client }) => {
+    const listed = await client.callTool({
+      name: "gateway_list_tools",
+      arguments: { serviceId: "downstream" }
+    });
+    const tools = (listed.structuredContent as { tools?: Array<{ name?: string }> } | undefined)?.tools ?? [];
+    assert.equal(tools.some((tool) => tool.name === "arbitrary_json"), false);
+
+    const schema = await client.callTool({
+      name: "gateway_get_tool_schema",
+      arguments: { serviceId: "downstream", toolName: ["arbitrary_json"] }
+    });
+    assert.equal(schema.isError, true);
+    assert.match(schema.content.find((item) => item.type === "text")?.text ?? "", /Unknown tool 'arbitrary_json'/);
+
+    const call = await client.callTool({
+      name: "gateway_call_tool",
+      arguments: {
+        serviceId: "downstream",
+        toolName: "arbitrary_json",
+        arguments: {}
+      }
+    });
+    assert.equal(call.isError, true);
+    assert.match(call.content.find((item) => item.type === "text")?.text ?? "", /is disabled by gateway configuration/);
+  }, () => undefined, "2026-07-28", [], ["arbitrary_*"]);
+});
+
 for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
   test(`MCP ${protocolVersion} legacy elicitation shorthand is normalized to elicitation.form`, () => {
     const capabilities = { elicitation: {} };
@@ -391,7 +420,8 @@ async function withProxy(
   assertion: (context: { client: Client; gatewayUrl: string }) => Promise<void>,
   onDownstreamCancelled: (cancelled: boolean) => void = () => undefined,
   downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28",
-  confirmationRequiredTools: string[] = []
+  confirmationRequiredTools: string[] = [],
+  disabledTools: string[] = []
 ): Promise<void> {
   const downstream = downstreamProtocolVersion === "2026-07-28"
     ? await startDownstream(onDownstreamCancelled)
@@ -404,6 +434,7 @@ async function withProxy(
         serviceId: "downstream",
         name: "Downstream",
         confirmationRequiredTools,
+        disabledTools,
         transport: downstream
           ? {
               type: "http",

@@ -61,6 +61,41 @@ test("ServiceRegistry loads metadata and routes downstream tool calls", async ()
   await registry.dispose();
 });
 
+test("ServiceRegistry hides and rejects tools matching disabledTools", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
+  const configPath = join(tempDir, "config.json");
+  const echoServicePath = join(process.cwd(), "examples", "echo-service.ts");
+
+  await writeFile(configPath, JSON.stringify({
+    services: [{
+      serviceId: "demo-echo",
+      name: "Demo Echo",
+      disabledTools: ["ec?o"],
+      transport: {
+        type: "stdio",
+        command: "node",
+        args: ["--experimental-strip-types", echoServicePath],
+        cwd: process.cwd()
+      }
+    }]
+  }), "utf8");
+
+  const registry = new ServiceRegistry(configPath, new ConfigLoader(), new Logger());
+  await registry.initialize();
+  try {
+    assert.deepEqual(registry.listTools("demo-echo"), []);
+    assert.deepEqual(registry.listTools("demo-echo", ["echo"]), []);
+    assert.equal(registry.getTool("demo-echo", "echo"), null);
+    await assert.rejects(
+      () => registry.callTool("demo-echo", "echo", { message: "blocked" }),
+      /Tool 'echo'.*is disabled by gateway configuration/
+    );
+    assert.equal(registry.getService("demo-echo")?.runtime.available, true);
+  } finally {
+    await registry.dispose();
+  }
+});
+
 test("ServiceRegistry removes disabled services on reload", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
   const configPath = join(tempDir, "config.json");

@@ -39,6 +39,34 @@ test("validateGatewayConfig accepts unique confirmation-required tool names", ()
   assert.deepEqual(config.services[0]?.confirmationRequiredTools, ["delete_file", "deploy"]);
 });
 
+test("validateGatewayConfig accepts unique disabled tool glob patterns", () => {
+  const config = validateGatewayConfig({
+    services: [{
+      serviceId: "demo",
+      name: "Demo",
+      disabledTools: ["internal_*", "legacy_?"],
+      transport: { type: "stdio", command: "node" }
+    }]
+  });
+
+  assert.deepEqual(config.services[0]?.disabledTools, ["internal_*", "legacy_?"]);
+});
+
+test("validateGatewayConfig rejects invalid disabled tool patterns", () => {
+  const service = {
+    serviceId: "demo",
+    name: "Demo",
+    transport: { type: "stdio", command: "node" }
+  };
+
+  for (const disabledTools of ["internal_*", [""], ["legacy_*", "legacy_*"]]) {
+    assert.throws(
+      () => validateGatewayConfig({ services: [{ ...service, disabledTools }] }),
+      /disabledTools.*unique non-empty strings/
+    );
+  }
+});
+
 test("validateGatewayConfig rejects invalid confirmation-required tool names", () => {
   const service = {
     serviceId: "demo",

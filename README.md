@@ -117,6 +117,7 @@ Stdio remains available when `--http` is enabled.
       "serviceId": "local-tools",
       "name": "Local Tools",
       "confirmationRequiredTools": ["delete_*", "deploy_?"],
+      "disabledTools": ["internal_*", "legacy_tool"],
       "transport": {
         "type": "stdio",
         "command": "your-mcp-service",
@@ -144,6 +145,7 @@ Stdio remains available when `--http` is enabled.
 | `enable` | Optional; defaults to `true`. |
 | `callTimeoutMs` | Optional downstream tool-call timeout; defaults to 120 seconds. |
 | `confirmationRequiredTools` | Optional unique array of case-sensitive full-name glob patterns. `*` matches zero or more characters and `?` matches one character. The gateway asks the upstream user for form elicitation confirmation before calling a matching tool. |
+| `disabledTools` | Optional unique array using the same glob syntax. Matching tools are hidden from tool listing and schema lookup, and calls are rejected before reaching the downstream service. |
 | `transport.type` | `stdio` or `http`. |
 | `transport.command` | Required command for a stdio service. |
 | `transport.args` | Optional command arguments for a stdio service. |
@@ -173,6 +175,8 @@ The config file is watched for changes. Invalid updates are rejected and the las
 The usual flow is `gateway_list_services` → `gateway_list_tools` → `gateway_get_tool_schema` when needed → `gateway_call_tool`. Pass `{}` to `gateway_call_tool` when the downstream tool has no arguments.
 
 Calls keep the downstream tool's original side effects and confirmation rules. Tools matching `confirmationRequiredTools` are never invoked until the current MCP session returns an accepted form elicitation with explicit confirmation; sessions without form elicitation support receive an error. A decline or cancel also returns an error without invoking the downstream tool. An uncertain `gateway_call_tool` failure is never replayed automatically. Enabling or disabling a service with `gateway_manage_service` atomically updates the config file.
+
+`disabledTools` takes precedence over `confirmationRequiredTools` when both match. A disabled tool is hidden and rejected immediately without asking for confirmation.
 
 Agents with Skills support can use the included [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) for the discovery and calling workflow.
 

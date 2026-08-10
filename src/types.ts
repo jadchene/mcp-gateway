@@ -107,6 +107,11 @@ export interface ServiceConfig {
    * upstream form elicitation confirmation before the gateway invokes them.
    */
   confirmationRequiredTools?: string[];
+  /**
+   * Lists case-sensitive downstream tool-name glob patterns that the gateway
+   * hides from discovery and refuses to invoke.
+   */
+  disabledTools?: string[];
 }
 
 /**
