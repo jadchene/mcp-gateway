@@ -47,41 +47,72 @@ function Invoke-CaptureStep {
     return @()
 }
 
+function Resolve-PackedTarballPath {
+    param(
+        [string[]]$PackOutput,
+        [string]$ProjectRoot
+    )
+
+    if ($PackOutput.Count -eq 0) {
+        throw "npm pack did not return package metadata."
+    }
+
+    $parsedOutput = $PackOutput -join "`n" | ConvertFrom-Json
+    $packInfo = if ($parsedOutput -is [System.Array]) {
+        $parsedOutput[0]
+    }
+    else {
+        @($parsedOutput.PSObject.Properties.Value)[0]
+    }
+    $filename = [string]$packInfo.filename
+
+    if ([string]::IsNullOrWhiteSpace($filename)) {
+        throw "npm pack metadata did not contain a tarball filename."
+    }
+    if ([IO.Path]::GetFileName($filename) -ne $filename -or [IO.Path]::GetExtension($filename) -ne ".tgz") {
+        throw "npm pack returned an unsafe tarball filename: $filename"
+    }
+
+    $tarballPath = [IO.Path]::GetFullPath((Join-Path $ProjectRoot $filename))
+    $tarballParent = [IO.Path]::GetDirectoryName($tarballPath)
+    if (-not [StringComparer]::OrdinalIgnoreCase.Equals($tarballParent, $ProjectRoot)) {
+        throw "npm pack returned a tarball outside the project root: $tarballPath"
+    }
+    if (-not (Test-Path -LiteralPath $tarballPath -PathType Leaf)) {
+        throw "Packed tarball was not created: $tarballPath"
+    }
+
+    return $tarballPath
+}
+
 $resolvedProjectRoot = (Resolve-Path $ProjectRoot).Path
 $packageJsonPath = Join-Path $resolvedProjectRoot "package.json"
 $defaultConfigPath = Join-Path $resolvedProjectRoot "config.example.json"
 $resolvedConfigPath = if ($ExampleConfigPath) { $ExampleConfigPath } else { $defaultConfigPath }
-$packageName = "mcp-gateway-service"
 
 if (-not (Test-Path $packageJsonPath)) {
     throw "package.json not found under project root: $resolvedProjectRoot"
 }
 
 $packageInfo = Get-Content -Raw $packageJsonPath | ConvertFrom-Json
+$packageName = [string]$packageInfo.name
+if ([string]::IsNullOrWhiteSpace($packageName)) {
+    throw "package.json does not contain a package name."
+}
 
 Push-Location $resolvedProjectRoot
 try {
     Invoke-Step -FilePath "npm" -Arguments @("install") -Description "Install project dependencies"
     Invoke-Step -FilePath "npm" -Arguments @("run", "build") -Description "Build the MCP gateway"
     $packOutput = Invoke-CaptureStep -FilePath "npm" -Arguments @("pack", "--json") -Description "Create a package tarball for global installation"
-    if ($packOutput.Count -gt 0) {
-        $packInfo = ($packOutput -join "`n" | ConvertFrom-Json)[0]
-        $tarballPath = Join-Path $resolvedProjectRoot $packInfo.filename
-    } else {
-        $tarballPath = Join-Path $resolvedProjectRoot "$($packageInfo.name)-$($packageInfo.version).tgz"
-    }
+    $tarballPath = Resolve-PackedTarballPath -PackOutput $packOutput -ProjectRoot $resolvedProjectRoot
 
-    try {
-        Invoke-Step -FilePath "npm" -Arguments @("uninstall", "-g", $packageName) -Description "Remove any previous global installation of mcp-gateway-service"
-    }
-    catch {
-        Write-Host "Previous global installation was not removed cleanly. Continuing with fresh install."
-    }
+    Invoke-Step -FilePath "npm" -Arguments @("uninstall", "-g", $packageName) -Description "Remove any previous global installation of $packageName"
 
     Invoke-Step -FilePath "npm" -Arguments @("install", "-g", $tarballPath) -Description "Install the packaged mcp-gateway-service tarball globally"
 
-    if (-not $KeepTarball -and (Test-Path $tarballPath)) {
-        Remove-Item $tarballPath -Force
+    if (-not $KeepTarball -and (Test-Path -LiteralPath $tarballPath -PathType Leaf)) {
+        Remove-Item -LiteralPath $tarballPath -Force
     }
 }
 finally {
