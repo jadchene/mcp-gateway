@@ -17,6 +17,7 @@ The project uses the official TypeScript SDK v2 and requires Node.js 24 or later
 - Connect the agent once, then add or remove downstream services in the gateway config.
 - Find tools by name or description and load schemas only when required.
 - Use stdio and Streamable HTTP services through the same interface.
+- Require user confirmation for selected tool-name patterns, or hide and block matching tools entirely.
 - Reload config changes without restarting the gateway.
 
 ## Quick Start
