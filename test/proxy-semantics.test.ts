@@ -97,12 +97,19 @@ test("gateway requires configured tool confirmation before a modern downstream c
     assert.ok(first.requestState);
     assert.match(first.requestState, /^mcp-gateway-tool-confirmation-v1\./);
     assert.equal(first.inputRequests?.confirm?.method, "elicitation/create");
+    const confirmationParams = first.inputRequests?.confirm?.params as {
+      message?: string;
+      requestedSchema?: { properties?: { decision?: { enum?: string[] } } };
+    } | undefined;
+    assert.match(confirmationParams?.message ?? "", /Tool: "arbitrary_json"/);
+    assert.match(confirmationParams?.message ?? "", /Arguments:\n\{\}/);
+    assert.deepEqual(confirmationParams?.requestedSchema?.properties?.decision?.enum, ["yes", "no"]);
 
     const second = await client.callTool({
       ...call,
       requestState: first.requestState,
       inputResponses: {
-        confirm: { action: "accept", content: { confirmed: true } }
+        confirm: { action: "accept", content: { decision: "yes" } }
       }
     } as unknown as CallToolRequestParams, { allowInputRequired: true }) as CallToolResult;
     assert.deepEqual(second.structuredContent, [1, true, null, { nested: "value" }]);
@@ -514,10 +521,17 @@ async function withLegacyInMemoryProxy(
       : { elicitation: { form: {} } },
     supportedProtocolVersions: [protocolVersion]
   });
-  client.setRequestHandler("elicitation/create", async () => ({
-    action: "accept",
-    content: { confirmed: true }
-  }));
+  client.setRequestHandler("elicitation/create", async (request) => {
+    const usesDecision = "requestedSchema" in request.params
+      && Object.hasOwn(request.params.requestedSchema.properties, "decision");
+    const content: Record<string, string | number | boolean | string[]> = usesDecision
+      ? { decision: "yes" }
+      : { confirmed: true };
+    return {
+      action: "accept",
+      content
+    };
+  });
 
   try {
     await gatewayServer.connect(serverTransport);

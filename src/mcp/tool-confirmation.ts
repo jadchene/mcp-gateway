@@ -99,7 +99,7 @@ export class ToolConfirmationInterceptor {
 
     const response = context.inputResponses?.[CONFIRMATION_RESPONSE_KEY] as ElicitResult | undefined;
     if (!isConfirmed(response)) {
-      throw new Error(`Tool '${toolName}' in service '${serviceId}' was not called because confirmation was declined.`);
+      throw new Error(`Tool '${toolName}' in service '${serviceId}' was not called because the user rejected the confirmation request.`);
     }
 
     return this.invokeReserved(
@@ -231,17 +231,18 @@ function buildConfirmationRequest(state: InvocationState): InputRequiredResult {
         method: "elicitation/create",
         params: {
           mode: "form",
-          message: `Allow tool '${state.toolName}' from MCP service '${state.serviceId}' to run?`,
+          message: buildConfirmationMessage(state),
           requestedSchema: {
             type: "object",
             properties: {
-              confirmed: {
-                type: "boolean",
-                title: "Confirm tool call",
-                description: "Set to true to allow this tool call."
+              decision: {
+                type: "string",
+                title: "Run this tool call?",
+                description: "Choose yes to execute the displayed call or no to reject it.",
+                enum: ["yes", "no"]
               }
             },
-            required: ["confirmed"],
+            required: ["decision"],
             additionalProperties: false
           }
         }
@@ -249,6 +250,21 @@ function buildConfirmationRequest(state: InvocationState): InputRequiredResult {
     },
     requestState: state.requestState
   };
+}
+
+/**
+ * Shows the exact protected invocation so the user can make an informed decision.
+ */
+function buildConfirmationMessage(state: InvocationState): string {
+  return [
+    "Review this gateway-protected tool call before execution.",
+    `Service: ${JSON.stringify(state.serviceId)}`,
+    `Tool: ${JSON.stringify(state.toolName)}`,
+    "Risk: Gateway policy requires explicit confirmation.",
+    "Arguments:",
+    JSON.stringify(state.args, null, 2),
+    "Choose yes to execute it or no to reject it."
+  ].join("\n");
 }
 
 /**
@@ -260,12 +276,12 @@ function supportsFormElicitation(capabilities: Record<string, unknown> | undefin
 }
 
 /**
- * Treats cancel, decline, malformed content, and an unchecked form as refusal.
+ * Treats cancel, decline, malformed content, and a no decision as refusal.
  */
 function isConfirmed(response: ElicitResult | undefined): boolean {
   return response?.action === "accept"
     && isRecord(response.content)
-    && response.content.confirmed === true;
+    && response.content.decision === "yes";
 }
 
 /**

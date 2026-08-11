@@ -174,7 +174,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 
 通常按 `gateway_list_services` → `gateway_list_tools` → 按需调用 `gateway_get_tool_schema` → `gateway_call_tool` 的顺序使用。下游工具没有参数时，`gateway_call_tool` 的 `arguments` 传 `{}`。
 
-工具调用会保留下游工具原有的副作用和确认规则。匹配 `confirmationRequiredTools` 模式的工具只有在当前 MCP 会话返回“接受”且显式确认后才会调用；会话不支持表单 elicitation、用户拒绝或取消时，网关会直接返回错误且不会调用下游工具。状态不确定的 `gateway_call_tool` 失败不会自动重放。通过 `gateway_manage_service` 启用或禁用服务会原子更新配置文件。
+工具调用会保留下游工具原有的副作用和确认规则。匹配 `confirmationRequiredTools` 模式的工具会展示实际服务、工具和完整参数，只有当前 MCP 会话在表单 elicitation 中选择 `yes` 后才会调用；会话不支持表单 elicitation，或用户选择 `no`、拒绝、取消时，网关会返回明确的拒绝结果且不会调用下游工具。状态不确定的 `gateway_call_tool` 失败不会自动重放。通过 `gateway_manage_service` 启用或禁用服务会原子更新配置文件。
 
 当一个工具同时匹配 `disabledTools` 和 `confirmationRequiredTools` 时，`disabledTools` 优先：工具会被隐藏并直接拒绝，不会发起确认。
 

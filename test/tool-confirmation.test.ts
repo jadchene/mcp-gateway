@@ -39,6 +39,17 @@ test("ToolConfirmationInterceptor invokes only after explicit acceptance", async
   assert.equal(first.resultType, "input_required");
   assert.ok(first.requestState);
   assert.match(first.requestState, /^mcp-gateway-tool-confirmation-v1\./);
+  const request = first.inputRequests?.confirm;
+  assert.equal(request?.method, "elicitation/create");
+  const params = request?.params as {
+    message?: string;
+    requestedSchema?: { properties?: { decision?: { enum?: string[] } } };
+  } | undefined;
+  assert.match(params?.message ?? "", /Service: "demo"/);
+  assert.match(params?.message ?? "", /Tool: "deploy"/);
+  assert.match(params?.message ?? "", /"environment": "production"/);
+  assert.match(params?.message ?? "", /Risk: Gateway policy requires explicit confirmation/);
+  assert.deepEqual(params?.requestedSchema?.properties?.decision?.enum, ["yes", "no"]);
   assert.equal(contexts.length, 0);
 
   const result = await interceptor.execute(
@@ -49,7 +60,7 @@ test("ToolConfirmationInterceptor invokes only after explicit acceptance", async
       clientCapabilities: FORM_CAPABILITIES,
       requestState: first.requestState,
       inputResponses: {
-        confirm: { action: "accept", content: { confirmed: true } }
+        confirm: { action: "accept", content: { decision: "yes" } }
       }
     },
     invoke
@@ -60,11 +71,11 @@ test("ToolConfirmationInterceptor invokes only after explicit acceptance", async
   assert.equal(contexts[0]?.inputResponses, undefined);
 });
 
-test("ToolConfirmationInterceptor does not invoke after decline or unchecked acceptance", async () => {
+test("ToolConfirmationInterceptor does not invoke after decline or a no decision", async () => {
   for (const response of [
     { action: "decline" },
     { action: "cancel" },
-    { action: "accept", content: { confirmed: false } }
+    { action: "accept", content: { decision: "no" } }
   ]) {
     const interceptor = new ToolConfirmationInterceptor();
     let calls = 0;
@@ -94,7 +105,7 @@ test("ToolConfirmationInterceptor does not invoke after decline or unchecked acc
           return { content: [] };
         }
       ),
-      /confirmation was declined/
+      /user rejected the confirmation request/
     );
     assert.equal(calls, 0);
   }
@@ -119,7 +130,7 @@ test("ToolConfirmationInterceptor rejects a retry whose invocation changed", asy
         clientCapabilities: FORM_CAPABILITIES,
         requestState: first.requestState,
         inputResponses: {
-          confirm: { action: "accept", content: { confirmed: true } }
+          confirm: { action: "accept", content: { decision: "yes" } }
         }
       },
       async () => ({ content: [] })
@@ -148,7 +159,7 @@ test("ToolConfirmationInterceptor preserves approval across downstream input-req
       clientCapabilities: FORM_CAPABILITIES,
       requestState: first.requestState,
       inputResponses: {
-        confirm: { action: "accept", content: { confirmed: true } }
+        confirm: { action: "accept", content: { decision: "yes" } }
       }
     },
     async () => {
@@ -214,7 +225,7 @@ test("ToolConfirmationInterceptor bounds parked confirmation state", async () =>
       },
       async () => ({ content: [] })
     ),
-    /confirmation was declined/
+    /user rejected the confirmation request/
   );
 
   const next = await interceptor.execute(

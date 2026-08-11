@@ -174,7 +174,7 @@ The config file is watched for changes. Invalid updates are rejected and the las
 
 The usual flow is `gateway_list_services` → `gateway_list_tools` → `gateway_get_tool_schema` when needed → `gateway_call_tool`. Pass `{}` to `gateway_call_tool` when the downstream tool has no arguments.
 
-Calls keep the downstream tool's original side effects and confirmation rules. Tools matching `confirmationRequiredTools` are never invoked until the current MCP session returns an accepted form elicitation with explicit confirmation; sessions without form elicitation support receive an error. A decline or cancel also returns an error without invoking the downstream tool. An uncertain `gateway_call_tool` failure is never replayed automatically. Enabling or disabling a service with `gateway_manage_service` atomically updates the config file.
+Calls keep the downstream tool's original side effects and confirmation rules. Tools matching `confirmationRequiredTools` are never invoked until the current MCP session reviews the exact service, tool, and arguments and answers `yes` to the form elicitation; sessions without form elicitation support receive an error. A `no`, decline, or cancel returns an explicit rejection without invoking the downstream tool. An uncertain `gateway_call_tool` failure is never replayed automatically. Enabling or disabling a service with `gateway_manage_service` atomically updates the config file.
 
 `disabledTools` takes precedence over `confirmationRequiredTools` when both match. A disabled tool is hidden and rejected immediately without asking for confirmation.
 
