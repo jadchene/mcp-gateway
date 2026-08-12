@@ -35,7 +35,10 @@ export class StreamableHttpGatewayServer {
   public get url(): string {
     const address = this.server?.address();
     const port = typeof address === "object" && address ? address.port : this.config.port;
-    return `http://${this.config.host}:${port}${this.config.path}`;
+    const host = this.config.host.includes(":") && !this.config.host.startsWith("[")
+      ? `[${this.config.host}]`
+      : this.config.host;
+    return `http://${host}:${port}${this.config.path}`;
   }
 
   /**

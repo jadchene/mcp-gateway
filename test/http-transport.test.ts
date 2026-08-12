@@ -95,6 +95,11 @@ test("StreamableHttpGatewayServer enforces bearer auth and gates admin tools", a
   }
 });
 
+test("StreamableHttpGatewayServer formats IPv6 endpoint URLs", () => {
+  const server = createGatewayServer({ host: "::1" });
+  assert.equal(server.url, "http://[::1]:0/mcp");
+});
+
 test("StreamableHttpGatewayServer rejects declared and chunked bodies over the byte limit", async () => {
   const server = createGatewayServer({ maxRequestBodyBytes: 64 });
   await server.start();
@@ -539,6 +544,7 @@ test("SDK list caching honors TTL and keeps private caches client-local", async 
 });
 
 function createGatewayServer(overrides: Partial<{
+  host: string;
   authToken: string;
   enableAdminTools: boolean;
   maxRequestBodyBytes: number;

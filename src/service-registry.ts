@@ -8,7 +8,7 @@ import type { McpClient } from "./mcp/client-types.ts";
 import type { DownstreamCallContext, DownstreamToolResult } from "./mcp/client-types.ts";
 import { StreamableHttpClient } from "./mcp/http-client.ts";
 import { matchesAnyToolNamePattern } from "./tool-name-pattern.ts";
-import type { GatewayConfig, ServiceConfig, ServiceMetadata, ServiceRuntimeSnapshot, ToolDefinition } from "./types.ts";
+import type { ServiceConfig, ServiceMetadata, ServiceRuntimeSnapshot, ToolDefinition } from "./types.ts";
 
 /**
  * Maintains the active service pool, client instances, and cached metadata.
@@ -32,14 +32,6 @@ export class ServiceRegistry {
   /**
    * Stores the last valid config snapshot.
    */
-  private currentConfig: GatewayConfig = {
-    logging: {
-      enable: false,
-      path: null
-    },
-    services: []
-  };
-
   /**
    * Stores the current immutable runtime view used by request handlers.
    */
@@ -120,7 +112,6 @@ export class ServiceRegistry {
       }
 
       const previousClients = this.clients;
-      this.currentConfig = nextConfig;
       this.snapshots = nextSnapshots;
       this.clients = nextClients;
       await disposeRemovedClients(previousClients, nextClients);
@@ -253,6 +244,7 @@ export class ServiceRegistry {
    */
   private async reconnectService(serviceId: string): Promise<ManageServiceResult> {
     const snapshot = this.requireService(serviceId);
+    const previousRuntime = snapshot.runtime;
     const currentClient = this.clients.get(serviceId);
     if (!currentClient) {
       throw new Error(`Service '${serviceId}' is unavailable.`);
@@ -284,9 +276,9 @@ export class ServiceRegistry {
       const message = error instanceof Error ? error.message : String(error);
 
       snapshot.runtime = {
-        available: true,
+        available: previousRuntime.available,
         lastError: `Reconnect failed; existing connection retained: ${message}`,
-        lastConnectedAt: snapshot.runtime.lastConnectedAt,
+        lastConnectedAt: previousRuntime.lastConnectedAt,
         restartAttempts: currentClient.restartCount
       };
 
@@ -294,7 +286,7 @@ export class ServiceRegistry {
         serviceId,
         action: "reconnect",
         enabled: true,
-        available: true
+        available: previousRuntime.available
       };
     }
   }

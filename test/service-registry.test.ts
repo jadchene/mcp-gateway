@@ -267,6 +267,8 @@ test("ServiceRegistry retains the active client when replacement reconnect fails
     const snapshot = registry.getService("demo-echo");
     assert.ok(snapshot);
     assert.equal(snapshot.config.transport.type, "stdio");
+    snapshot.runtime.available = false;
+    snapshot.runtime.lastError = "forced unavailable state";
     snapshot.config.transport.command = "definitely-missing-mcp-gateway-command";
 
     const result = await registry.manageService("demo-echo", "reconnect");
@@ -274,8 +276,9 @@ test("ServiceRegistry retains the active client when replacement reconnect fails
       serviceId: "demo-echo",
       action: "reconnect",
       enabled: true,
-      available: true
+      available: false
     });
+    assert.equal(registry.getService("demo-echo")?.runtime.available, false);
     assert.match(registry.getService("demo-echo")?.runtime.lastError ?? "", /existing connection retained/);
 
     const call = await registry.callTool("demo-echo", "echo", { message: "still-alive" });
