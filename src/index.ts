@@ -154,9 +154,10 @@ export function parseCliArgs(args: string[]): CliOptions {
   const enableAdminTools = args.includes("--http-admin-tools");
   const authTokenEnv = readOption(args, "--auth-token-env") ?? "MCP_GATEWAY_AUTH_TOKEN";
   const maxConcurrentRequests = readIntegerOption(args, "--max-concurrent-requests", 10_000);
+  const maxLegacySessions = readIntegerOption(args, "--max-legacy-sessions", 10_000);
   validateCliArgs(args);
   if (!enableHttp && (
-    host || port || path || enableAdminTools || maxConcurrentRequests || args.includes("--auth-token-env")
+    host || port || path || enableAdminTools || maxConcurrentRequests || maxLegacySessions || args.includes("--auth-token-env")
   )) {
     throw new Error("HTTP options require --http.");
   }
@@ -170,7 +171,8 @@ export function parseCliArgs(args: string[]): CliOptions {
           path: path ?? "/mcp",
           authToken: process.env[authTokenEnv],
           enableAdminTools,
-          maxConcurrentRequests: maxConcurrentRequests ?? 64
+          maxConcurrentRequests: maxConcurrentRequests ?? 64,
+          maxLegacySessions: maxLegacySessions ?? 256
         }
       : undefined
   };
@@ -207,7 +209,7 @@ function readIntegerOption(args: string[], name: string, maximum = 65_535): numb
  */
 function validateCliArgs(args: string[]): void {
   const switches = new Set(["--http", "--http-admin-tools", "-v", "--version"]);
-  const valued = new Set(["--config", "--port", "--host", "--path", "--auth-token-env", "--max-concurrent-requests"]);
+  const valued = new Set(["--config", "--port", "--host", "--path", "--auth-token-env", "--max-concurrent-requests", "--max-legacy-sessions"]);
   const seen = new Set<string>();
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] as string;

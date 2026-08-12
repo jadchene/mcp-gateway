@@ -261,7 +261,6 @@ export class ServiceRegistry {
     const nextClient = createClient(snapshot.config, this.logger);
 
     try {
-      await currentClient.dispose().catch(() => undefined);
       const metadata = await nextClient.getMetadata();
 
       snapshot.metadata = metadata;
@@ -272,6 +271,7 @@ export class ServiceRegistry {
         restartAttempts: nextClient.restartCount
       };
       this.clients.set(serviceId, nextClient);
+      await currentClient.dispose().catch(() => undefined);
 
       return {
         serviceId,
@@ -284,18 +284,17 @@ export class ServiceRegistry {
       const message = error instanceof Error ? error.message : String(error);
 
       snapshot.runtime = {
-        available: false,
-        lastError: message,
+        available: true,
+        lastError: `Reconnect failed; existing connection retained: ${message}`,
         lastConnectedAt: snapshot.runtime.lastConnectedAt,
         restartAttempts: currentClient.restartCount
       };
-      this.clients.set(serviceId, currentClient);
 
       return {
         serviceId,
         action: "reconnect",
         enabled: true,
-        available: false
+        available: true
       };
     }
   }

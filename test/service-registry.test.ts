@@ -243,6 +243,49 @@ test("ServiceRegistry can reconnect an unavailable service", async () => {
   await registry.dispose();
 });
 
+test("ServiceRegistry retains the active client when replacement reconnect fails", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
+  const configPath = join(tempDir, "config.json");
+  const echoServicePath = join(process.cwd(), "examples", "echo-service.ts");
+
+  await writeFile(configPath, JSON.stringify({
+    services: [{
+      serviceId: "demo-echo",
+      name: "Demo Echo",
+      transport: {
+        type: "stdio",
+        command: "node",
+        args: ["--experimental-strip-types", echoServicePath],
+        cwd: process.cwd()
+      }
+    }]
+  }), "utf8");
+
+  const registry = new ServiceRegistry(configPath, new ConfigLoader(), new Logger());
+  await registry.initialize();
+  try {
+    const snapshot = registry.getService("demo-echo");
+    assert.ok(snapshot);
+    assert.equal(snapshot.config.transport.type, "stdio");
+    snapshot.config.transport.command = "definitely-missing-mcp-gateway-command";
+
+    const result = await registry.manageService("demo-echo", "reconnect");
+    assert.deepEqual(result, {
+      serviceId: "demo-echo",
+      action: "reconnect",
+      enabled: true,
+      available: true
+    });
+    assert.match(registry.getService("demo-echo")?.runtime.lastError ?? "", /existing connection retained/);
+
+    const call = await registry.callTool("demo-echo", "echo", { message: "still-alive" });
+    const downstream = call.result as { structuredContent?: { echoed?: string } };
+    assert.equal(downstream.structuredContent?.echoed, "still-alive");
+  } finally {
+    await registry.dispose();
+  }
+});
+
 test("ServiceRegistry hot reload updates the active log file target", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
   const configPath = join(tempDir, "config.json");

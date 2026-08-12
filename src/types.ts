@@ -54,6 +54,10 @@ export interface GatewayServerConfig {
    * Limits concurrently processed HTTP requests.
    */
   maxConcurrentRequests?: number;
+  /**
+   * Limits concurrently retained stateful legacy HTTP sessions.
+   */
+  maxLegacySessions?: number;
 }
 
 /**

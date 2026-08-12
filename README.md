@@ -101,6 +101,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 | `--auth-token-env <name>` | Environment variable containing the HTTP bearer token. | `MCP_GATEWAY_AUTH_TOKEN` |
 | `--http-admin-tools` | Exposes `gateway_manage_service` over authenticated HTTP. | Disabled |
 | `--max-concurrent-requests <n>` | Bounds in-flight HTTP requests. | `64` |
+| `--max-legacy-sessions <n>` | Bounds retained stateful legacy HTTP sessions. | `256` |
 | `--version`, `-v` | Prints the installed version. | — |
 
 Stdio remains available when `--http` is enabled.

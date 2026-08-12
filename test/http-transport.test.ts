@@ -114,6 +114,30 @@ test("StreamableHttpGatewayServer requires auth for exposed binds and admin tool
   );
 });
 
+test("StreamableHttpGatewayServer rejects legacy initialization at the configured session limit", async () => {
+  const server = createGatewayServer({ maxLegacySessions: 1 });
+  await server.start();
+  const first = new Client(
+    { name: "legacy-capacity-first", version: "1.0.0" },
+    { supportedProtocolVersions: ["2025-11-25"] }
+  );
+  const second = new Client(
+    { name: "legacy-capacity-second", version: "1.0.0" },
+    { supportedProtocolVersions: ["2025-11-25"] }
+  );
+  try {
+    await first.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+    await assert.rejects(
+      second.connect(new StreamableHTTPClientTransport(new URL(server.url))),
+      /503|capacity/i
+    );
+  } finally {
+    await first.close().catch(() => undefined);
+    await second.close().catch(() => undefined);
+    await server.stop();
+  }
+});
+
 for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
   test(`StreamableHttpGatewayServer serves MCP ${protocolVersion} on the same endpoint`, async () => {
     const server = createGatewayServer();
@@ -497,6 +521,7 @@ test("SDK list caching honors TTL and keeps private caches client-local", async 
 function createGatewayServer(overrides: Partial<{
   authToken: string;
   enableAdminTools: boolean;
+  maxLegacySessions: number;
 }> = {}, registry = createRegistryStub()): StreamableHttpGatewayServer {
   const logger = new Logger();
   const engine = new McpGatewayEngine(registry as never, logger);

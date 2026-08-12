@@ -19,7 +19,8 @@ test("parseCliArgs enables HTTP only when --http is present", () => {
       path: "/mcp",
       authToken: undefined,
       enableAdminTools: false,
-      maxConcurrentRequests: 64
+      maxConcurrentRequests: 64,
+      maxLegacySessions: 256
     }
   });
 
@@ -32,7 +33,8 @@ test("parseCliArgs enables HTTP only when --http is present", () => {
       path: "/mcp",
       authToken: undefined,
       enableAdminTools: false,
-      maxConcurrentRequests: 64
+      maxConcurrentRequests: 64,
+      maxLegacySessions: 256
     }
   });
 });

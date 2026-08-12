@@ -24,6 +24,7 @@ export class StreamableHttpGatewayServer {
   private readonly logger: Logger;
   private readonly handler: McpHttpHandler;
   private readonly legacySessions = new Map<string, LegacyHttpSession>();
+  private legacySessionsInitializing = 0;
   private legacySessionSweepTimer: NodeJS.Timeout | null = null;
   private server: http.Server | null = null;
 
@@ -185,6 +186,18 @@ export class StreamableHttpGatewayServer {
    * Creates a stateful 2025 transport for an initialize request.
    */
   private async handleLegacyInitialization(request: Request): Promise<Response> {
+    const maxLegacySessions = this.config.maxLegacySessions ?? 256;
+    if (this.legacySessions.size + this.legacySessionsInitializing >= maxLegacySessions) {
+      return Response.json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: "Legacy session capacity reached"
+        },
+        id: null
+      }, { status: 503, headers: { "Retry-After": "1" } });
+    }
+    this.legacySessionsInitializing += 1;
     let session: LegacyHttpSession;
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: randomUUID,
@@ -199,9 +212,8 @@ export class StreamableHttpGatewayServer {
       includeAdminTools: this.config.enableAdminTools ?? false
     });
     session = { server, transport, lastAccessedAt: Date.now() };
-    await server.connect(transport);
-
     try {
+      await server.connect(transport);
       const response = await transport.handleRequest(request);
       if (!transport.sessionId) {
         await server.close().catch(() => undefined);
@@ -213,6 +225,8 @@ export class StreamableHttpGatewayServer {
       }
       await server.close().catch(() => undefined);
       throw error;
+    } finally {
+      this.legacySessionsInitializing -= 1;
     }
   }
 
