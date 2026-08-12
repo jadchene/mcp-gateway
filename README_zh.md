@@ -101,6 +101,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 | `--auth-token-env <名称>` | 保存 HTTP Bearer Token 的环境变量名。 | `MCP_GATEWAY_AUTH_TOKEN` |
 | `--http-admin-tools` | 在已认证 HTTP 入口暴露 `gateway_manage_service`。 | 不启用 |
 | `--max-concurrent-requests <数量>` | HTTP 并发请求上限。 | `64` |
+| `--max-request-body-bytes <字节数>` | HTTP 请求体字节上限，最大可配置为 64 MiB，超限返回 `413`。 | `16777216`（16 MiB） |
 | `--max-legacy-sessions <数量>` | 有状态旧版 HTTP 会话的保留上限。 | `256` |
 | `--version`、`-v` | 输出已安装版本。 | — |
 

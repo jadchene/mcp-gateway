@@ -14,6 +14,7 @@ import type { GatewayServerConfig } from "./types.ts";
 
 const LEGACY_SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
 const LEGACY_SESSION_SWEEP_INTERVAL_MS = 60 * 1_000;
+const DEFAULT_MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
 
 /**
  * Exposes the gateway through SDK v2 Streamable HTTP.
@@ -86,6 +87,7 @@ export class StreamableHttpGatewayServer {
     });
 
     const maxConcurrentRequests = this.config.maxConcurrentRequests ?? 64;
+    const maxRequestBodyBytes = this.config.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES;
     let activeRequests = 0;
     this.server = http.createServer((request, response) => {
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
@@ -114,7 +116,7 @@ export class StreamableHttpGatewayServer {
       };
       response.once("finish", release);
       response.once("close", release);
-      void handleMcp(request, response);
+      void handleBoundedRequest(request, response, maxRequestBodyBytes, handleMcp, this.logger);
     });
 
     await new Promise<void>((resolveListen, rejectListen) => {
@@ -241,6 +243,98 @@ export class StreamableHttpGatewayServer {
       this.legacySessions.delete(sessionId);
       await session.server.close().catch(() => undefined);
     }
+  }
+}
+
+/**
+ * Reads a JSON request body with a byte limit before handing it to the SDK.
+ * Supplying the parsed body prevents the SDK Node adapter from buffering the
+ * same unbounded stream a second time.
+ */
+async function handleBoundedRequest(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  maxBytes: number,
+  handleMcp: ReturnType<typeof toNodeHandler>,
+  logger: Logger
+): Promise<void> {
+  try {
+    const body = await readBoundedJsonBody(request, maxBytes);
+    if (body === NO_BODY) {
+      await handleMcp(request, response);
+    } else {
+      await handleMcp(request, response, body);
+    }
+  } catch (error) {
+    if (response.headersSent || response.destroyed) {
+      return;
+    }
+    const bodyError = error instanceof HttpBodyError
+      ? error
+      : new HttpBodyError(400, "Invalid JSON request body.");
+    logger.warn("gateway.http_body_rejected", {
+      status: bodyError.status,
+      message: bodyError.message
+    });
+    response.writeHead(bodyError.status, {
+      "Content-Type": "application/json",
+      "Connection": "close"
+    }).end(JSON.stringify({
+      jsonrpc: "2.0",
+      error: { code: -32700, message: bodyError.message },
+      id: null
+    }));
+  }
+}
+
+const NO_BODY = Symbol("no-http-body");
+
+async function readBoundedJsonBody(
+  request: http.IncomingMessage,
+  maxBytes: number
+): Promise<unknown | typeof NO_BODY> {
+  const contentEncoding = request.headers["content-encoding"];
+  if (contentEncoding && contentEncoding !== "identity") {
+    throw new HttpBodyError(415, "Compressed HTTP request bodies are not supported.");
+  }
+
+  const declaredLength = request.headers["content-length"];
+  if (declaredLength !== undefined) {
+    const normalized = Array.isArray(declaredLength) ? declaredLength[0] : declaredLength;
+    if (!/^\d+$/.test(normalized)) {
+      throw new HttpBodyError(400, "Invalid Content-Length header.");
+    }
+    if (Number(normalized) > maxBytes) {
+      throw new HttpBodyError(413, `HTTP request body exceeds the ${maxBytes}-byte limit.`);
+    }
+  }
+
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for await (const chunk of request) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += bytes.length;
+    if (totalBytes > maxBytes) {
+      throw new HttpBodyError(413, `HTTP request body exceeds the ${maxBytes}-byte limit.`);
+    }
+    chunks.push(bytes);
+  }
+  if (totalBytes === 0) {
+    return NO_BODY;
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks, totalBytes).toString("utf8")) as unknown;
+  } catch {
+    throw new HttpBodyError(400, "Invalid JSON request body.");
+  }
+}
+
+class HttpBodyError extends Error {
+  public readonly status: number;
+
+  public constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
   }
 }
 

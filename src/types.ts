@@ -55,6 +55,10 @@ export interface GatewayServerConfig {
    */
   maxConcurrentRequests?: number;
   /**
+   * Limits the decoded inbound HTTP request body before JSON parsing.
+   */
+  maxRequestBodyBytes?: number;
+  /**
    * Limits concurrently retained stateful legacy HTTP sessions.
    */
   maxLegacySessions?: number;

@@ -95,6 +95,26 @@ test("StreamableHttpGatewayServer enforces bearer auth and gates admin tools", a
   }
 });
 
+test("StreamableHttpGatewayServer rejects declared and chunked bodies over the byte limit", async () => {
+  const server = createGatewayServer({ maxRequestBodyBytes: 64 });
+  await server.start();
+  try {
+    const declared = await rawHttpRequest(server.url, {
+      "Content-Type": "application/json",
+      "Content-Length": "65"
+    }, "{}");
+    assert.equal(declared.status, 413);
+
+    const chunked = await rawHttpRequest(server.url, {
+      "Content-Type": "application/json",
+      "Transfer-Encoding": "chunked"
+    }, "{\"padding\":\"" + "x".repeat(80) + "\"}");
+    assert.equal(chunked.status, 413);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("StreamableHttpGatewayServer requires auth for exposed binds and admin tools", async () => {
   const logger = new Logger();
   const engine = new McpGatewayEngine(createRegistryStub() as never, logger);
@@ -521,6 +541,7 @@ test("SDK list caching honors TTL and keeps private caches client-local", async 
 function createGatewayServer(overrides: Partial<{
   authToken: string;
   enableAdminTools: boolean;
+  maxRequestBodyBytes: number;
   maxLegacySessions: number;
 }> = {}, registry = createRegistryStub()): StreamableHttpGatewayServer {
   const logger = new Logger();
@@ -532,6 +553,32 @@ function createGatewayServer(overrides: Partial<{
     path: "/mcp",
     ...overrides
   }, engine, logger);
+}
+
+async function rawHttpRequest(
+  url: string,
+  headers: Record<string, string>,
+  body: string
+): Promise<{ status: number; body: string }> {
+  const target = new URL(url);
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      hostname: target.hostname,
+      port: target.port,
+      path: target.pathname,
+      method: "POST",
+      headers
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => resolve({
+        status: response.statusCode ?? 0,
+        body: Buffer.concat(chunks).toString("utf8")
+      }));
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
 }
 
 function createElicitingRegistryStub(): ReturnType<typeof createRegistryStub> {
