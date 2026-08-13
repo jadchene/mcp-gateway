@@ -7,31 +7,18 @@ description: Route work through an MCP gateway with token-efficient downstream s
 
 Use the gateway as the single entry point for downstream MCP services.
 
-## Routing Workflow
+## Workflow
 
 1. Reuse an exact `serviceId` already confirmed in the current session; otherwise call `gateway_list_services`.
-2. Reuse an exact downstream tool name already confirmed in the current session; otherwise call `gateway_list_tools` for only the selected service.
-3. Filter discovery with unique non-empty `toolName` and/or `desc` string arrays. Treat both filters as case-insensitive literal substring matches joined by OR.
-4. Obtain the input schema when arguments are unfamiliar, incomplete, or safety-sensitive. Use `includeSchema: true` during filtered discovery or call `gateway_get_tool_schema` with exact case-sensitive tool names.
-5. Call `gateway_call_tool` with the confirmed `serviceId`, exact `toolName`, and an explicit `arguments` object. Pass `{}` for a no-argument tool.
-6. Refresh only stale service, tool, or schema information after an unknown-identifier or validation failure.
-
-## Discovery Rules
-
-- Never guess a service identifier, tool name, or argument shape.
-- Treat `serviceId` as a downstream identifier returned by `gateway_list_services`; never use a gateway-owned tool name as a service identifier.
-- Search only the relevant service instead of collecting every downstream tool.
-- Inspect description matches because negative guidance may also contain the search term.
-- Reuse schemas returned by `gateway_list_tools(includeSchema: true)` instead of fetching them again.
-- Batch exact names in one `gateway_get_tool_schema` call when several selected tools need schemas.
-- Treat downstream `structuredContent` as arbitrary JSON.
+2. Reuse an exact downstream tool name already confirmed in the session; otherwise search only that service with `gateway_list_tools`. The unique non-empty `toolName` and `desc` filters are case-insensitive literal substrings joined by OR, so inspect description matches for negative guidance.
+3. Obtain unfamiliar or safety-sensitive schemas with `includeSchema: true` or `gateway_get_tool_schema`; tool names are exact and case-sensitive.
+4. Call `gateway_call_tool` with the confirmed identifiers and an explicit `arguments` object; pass `{}` when the tool has no arguments.
+5. Refresh only the identifier or schema rejected as stale.
 
 ## Diagnostics and Control
 
-- Use `gateway_get_service` only when connection state, protocol details, server identity, or recent errors matter.
-- Use `gateway_manage_service` only when the user explicitly requests reconnecting, enabling, or disabling a service.
-- Treat `reconnect` as a connection refresh that does not change config.
-- Treat `enable` and `disable` as persistent config changes.
+- Treat `serviceId` as a downstream identifier, never as a gateway-owned tool.
+- Use `gateway_get_service` for connection diagnostics. Use `gateway_manage_service` only when explicitly requested: `reconnect` does not change config, while `enable` and `disable` persist.
 
 ## Safety
 
