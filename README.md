@@ -168,7 +168,7 @@ The config file is watched for changes. Invalid updates are rejected and the las
 
 | Tool | Description |
 | --- | --- |
-| `gateway_list_services` | Lists configured services and their availability. |
+| `gateway_list_services` | Searches configured services by identifier or description and can filter by availability. |
 | `gateway_get_service` | Shows one service's connection state, protocol revision, server identity, and recent error. |
 | `gateway_list_tools` | Searches a service's tools by name or description and can include schemas. |
 | `gateway_get_tool_schema` | Returns schemas for exact tool names. |
@@ -176,6 +176,8 @@ The config file is watched for changes. Invalid updates are rejected and the las
 | `gateway_call_tool` | Calls one downstream tool and returns its MCP result. |
 
 The usual flow is `gateway_list_services` → `gateway_list_tools` → `gateway_get_tool_schema` when needed → `gateway_call_tool`. Pass `{}` to `gateway_call_tool` when the downstream tool has no arguments.
+
+`gateway_list_services` accepts optional `serviceId` and `desc` string arrays as case-insensitive substring filters. Matches across these two fields use OR. The optional `available` boolean further limits those matches by current availability.
 
 Calls keep the downstream tool's original side effects and confirmation rules. Tools matching `confirmationRequiredTools` are never invoked until the current MCP session reviews the exact service, tool, and arguments and answers `yes` to the form elicitation; sessions without form elicitation support receive an error. A `no`, decline, or cancel returns an explicit rejection without invoking the downstream tool. An uncertain `gateway_call_tool` failure is never replayed automatically. Enabling or disabling a service with `gateway_manage_service` atomically updates the config file.
 

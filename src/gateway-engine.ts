@@ -52,9 +52,7 @@ export class McpGatewayEngine {
     await this.startupBarrier;
     switch (toolName) {
       case "gateway_list_services":
-        return successContent({
-          services: this.registry.listServices().map(formatServiceSummary)
-        });
+        return this.listServices(args);
       case "gateway_get_service":
         return this.getService(args);
       case "gateway_list_tools":
@@ -68,6 +66,28 @@ export class McpGatewayEngine {
       default:
         throw new Error(`Unknown gateway tool '${toolName}'.`);
     }
+  }
+
+  /**
+   * Returns service summaries optionally matching identifiers, descriptions, and availability.
+   */
+  public listServices(args: JsonObject): DownstreamToolResult {
+    const serviceId = optionalUniqueNonEmptyStringArray(args.serviceId, "The 'serviceId' argument must be a unique non-empty string array when provided.");
+    const desc = optionalUniqueNonEmptyStringArray(args.desc, "The 'desc' argument must be a unique non-empty string array when provided.");
+    const available = optionalBoolean(args.available, "The 'available' argument must be a boolean when provided.");
+    const serviceIdKeywords = normalizeKeywords(serviceId);
+    const descriptionKeywords = normalizeKeywords(desc);
+    const services = this.registry.listServices().filter((snapshot) => {
+      const matchesText = serviceIdKeywords.length === 0 && descriptionKeywords.length === 0
+        || serviceIdKeywords.some((keyword) => snapshot.config.serviceId.toLowerCase().includes(keyword))
+        || descriptionKeywords.some((keyword) => (snapshot.config.description ?? "").toLowerCase().includes(keyword));
+      const matchesAvailability = available === undefined || snapshot.runtime.available === available;
+      return matchesText && matchesAvailability;
+    });
+
+    return successContent({
+      services: services.map(formatServiceSummary)
+    });
   }
 
   /**
@@ -191,12 +211,15 @@ export function buildGatewayTools(options: { includeAdminTools?: boolean } = {})
   const tools: GatewayToolDefinition[] = [
     {
       name: "gateway_list_services",
-      description: "Lists downstream MCP services with their logical identifiers, descriptions, and current availability.",
-      inputSchema: {
-        type: "object",
-        properties: {},
-        additionalProperties: false
-      },
+      description: "Lists downstream MCP services by case-insensitive identifier or description substring filters and optional availability.",
+      inputSchema: objectSchema([], {
+        serviceId: uniqueNonEmptyStringArraySchema("Optional unique service identifier substrings. Matching is case-insensitive; identifier and description filters use OR."),
+        desc: uniqueNonEmptyStringArraySchema("Optional unique description substrings. Matching is case-insensitive; identifier and description filters use OR."),
+        available: {
+          type: "boolean",
+          description: "Optionally limits results to services with the requested current availability."
+        }
+      }),
       outputSchema: outputSchemas.listServices
     },
     {
@@ -492,6 +515,13 @@ function optionalBoolean(input: unknown, message: string): boolean | undefined {
     throw new Error(message);
   }
   return input;
+}
+
+/**
+ * Normalizes optional substring filters for case-insensitive matching.
+ */
+function normalizeKeywords(input: string[] | undefined): string[] {
+  return (input ?? []).map((value) => value.trim().toLowerCase());
 }
 
 /**

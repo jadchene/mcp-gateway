@@ -178,6 +178,101 @@ test("McpGatewayEngine returns a minimal service list payload", () => {
   });
 });
 
+test("McpGatewayEngine advertises service list filters", () => {
+  const tool = buildGatewayTools().find((candidate) => candidate.name === "gateway_list_services") as {
+    description?: string;
+    inputSchema?: {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+  } | undefined;
+
+  assert.equal(tool?.description, "Lists downstream MCP services by case-insensitive identifier or description substring filters and optional availability.");
+  assert.deepEqual(tool?.inputSchema?.required, []);
+  assert.deepEqual(tool?.inputSchema?.properties?.serviceId, {
+    type: "array",
+    description: "Optional unique service identifier substrings. Matching is case-insensitive; identifier and description filters use OR.",
+    minItems: 1,
+    uniqueItems: true,
+    items: {
+      type: "string",
+      minLength: 1,
+      pattern: "\\S"
+    }
+  });
+  assert.deepEqual(tool?.inputSchema?.properties?.desc, {
+    type: "array",
+    description: "Optional unique description substrings. Matching is case-insensitive; identifier and description filters use OR.",
+    minItems: 1,
+    uniqueItems: true,
+    items: {
+      type: "string",
+      minLength: 1,
+      pattern: "\\S"
+    }
+  });
+  assert.deepEqual(tool?.inputSchema?.properties?.available, {
+    type: "boolean",
+    description: "Optionally limits results to services with the requested current availability."
+  });
+});
+
+test("McpGatewayEngine filters services by identifier, description, and availability", () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({
+    services: [
+      { serviceId: "database", description: "Database access MCP service.", available: true },
+      { serviceId: "gitea", description: "Repository hosting MCP service.", available: true },
+      { serviceId: "idea", description: "JetBrains IDEA MCP service.", available: false },
+      { serviceId: "ssh", description: "Remote shell MCP service.", available: true }
+    ]
+  }));
+
+  const textResult = engine.listServices({
+    serviceId: ["BASE", "ssh"],
+    desc: ["repository host"]
+  }) as { structuredContent?: { services?: Array<{ serviceId?: string }> } };
+  assert.deepEqual(textResult.structuredContent?.services?.map((service) => service.serviceId), [
+    "database",
+    "gitea",
+    "ssh"
+  ]);
+
+  const availabilityResult = engine.listServices({
+    serviceId: ["base"],
+    desc: ["JETBRAINS"],
+    available: false
+  }) as { structuredContent?: { services?: Array<{ serviceId?: string }> } };
+  assert.deepEqual(availabilityResult.structuredContent?.services?.map((service) => service.serviceId), ["idea"]);
+
+  const availableOnlyResult = engine.listServices({ available: true }) as {
+    structuredContent?: { services?: Array<{ serviceId?: string }> };
+  };
+  assert.deepEqual(availableOnlyResult.structuredContent?.services?.map((service) => service.serviceId), [
+    "database",
+    "gitea",
+    "ssh"
+  ]);
+});
+
+test("McpGatewayEngine rejects invalid service list filters", () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({}));
+
+  for (const serviceId of ["database", [], ["database", "database"], [" "]]) {
+    assert.throws(
+      () => engine.listServices({ serviceId }),
+      /serviceId.*unique non-empty string array/
+    );
+  }
+  assert.throws(
+    () => engine.listServices({ desc: "database" }),
+    /desc.*unique non-empty string array/
+  );
+  assert.throws(
+    () => engine.listServices({ available: "true" }),
+    /available.*must be a boolean/
+  );
+});
+
 test("McpGatewayEngine advertises includeSchema on gateway_list_tools", () => {
   const tool = buildGatewayTools().find((candidate) => candidate.name === "gateway_list_tools") as {
     inputSchema?: {
@@ -822,6 +917,11 @@ test("McpGatewayEngine exposes a compact manageService payload", async () => {
 
 function createRegistryStub(overrides: {
   config?: Partial<ServiceRuntimeSnapshot["config"]>;
+  services?: Array<{
+    serviceId: string;
+    description?: string;
+    available: boolean;
+  }>;
   tools?: ToolDefinition[];
   callTool?: (serviceId: string, toolName: string, args: Record<string, unknown>) => Promise<{
     result: unknown;
@@ -877,10 +977,22 @@ function createRegistryStub(overrides: {
       restartAttempts: 0
     }
   };
+  const snapshots = overrides.services?.map((service) => ({
+    ...snapshot,
+    config: {
+      ...snapshot.config,
+      serviceId: service.serviceId,
+      description: service.description
+    },
+    runtime: {
+      ...snapshot.runtime,
+      available: service.available
+    }
+  })) ?? [snapshot];
 
   return {
-    listServices: () => [snapshot],
-    getService: (serviceId: string) => serviceId === snapshot.config.serviceId ? snapshot : null,
+    listServices: () => snapshots,
+    getService: (serviceId: string) => snapshots.find((candidate) => candidate.config.serviceId === serviceId) ?? null,
     listTools: (serviceId: string, toolName?: string[], desc?: string[]) => {
       if (serviceId !== snapshot.config.serviceId) {
         return [];

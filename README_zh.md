@@ -168,7 +168,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 
 | 工具 | 说明 |
 | --- | --- |
-| `gateway_list_services` | 列出已配置的服务及其可用状态。 |
+| `gateway_list_services` | 按服务标识或描述搜索已配置服务，并可按可用状态筛选。 |
 | `gateway_get_service` | 查看服务连接状态、协议版本、服务端信息和最近一次错误。 |
 | `gateway_list_tools` | 按名称或描述搜索服务中的工具，可同时返回 schema。 |
 | `gateway_get_tool_schema` | 获取准确工具名称对应的 schema。 |
@@ -176,6 +176,8 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 | `gateway_call_tool` | 调用一个下游工具并返回 MCP 结果。 |
 
 通常按 `gateway_list_services` → `gateway_list_tools` → 按需调用 `gateway_get_tool_schema` → `gateway_call_tool` 的顺序使用。下游工具没有参数时，`gateway_call_tool` 的 `arguments` 传 `{}`。
+
+`gateway_list_services` 可选传入 `serviceId`、`desc` 字符串数组，按不区分大小写的子串匹配，两类文本条件之间为 OR；还可传入 `available` 布尔值，在文本匹配结果上继续按当前可用状态筛选。
 
 工具调用会保留下游工具原有的副作用和确认规则。匹配 `confirmationRequiredTools` 模式的工具会展示实际服务、工具和完整参数，只有当前 MCP 会话在表单 elicitation 中选择 `yes` 后才会调用；会话不支持表单 elicitation，或用户选择 `no`、拒绝、取消时，网关会返回明确的拒绝结果且不会调用下游工具。状态不确定的 `gateway_call_tool` 失败不会自动重放。通过 `gateway_manage_service` 启用或禁用服务会原子更新配置文件。
 
