@@ -10,10 +10,10 @@ import {
   type ServerOptions
 } from "@modelcontextprotocol/server";
 import { buildGatewayTools, McpGatewayEngine } from "../gateway-engine.ts";
-import type { JsonObject } from "../types.ts";
 import { VERSION } from "../version.ts";
 import type { DownstreamCallContext } from "./client-types.ts";
 import { SUPPORTED_MCP_PROTOCOL_VERSIONS } from "./versions.ts";
+import { createInputSchema } from "./input-schema.ts";
 
 /**
  * Creates one SDK server instance with the selected gateway tool surface.
@@ -46,7 +46,7 @@ export function createGatewayMcpServer(
   const server = new McpServer({ name: "mcp-gateway", version: VERSION }, serverOptions);
 
   for (const tool of buildGatewayTools(options)) {
-    const inputSchema = fromJsonSchema<JsonObject>(tool.inputSchema as JsonSchemaType);
+    const inputSchema = createInputSchema(tool.inputSchema);
     const outputSchema = tool.outputSchema
       ? fromJsonSchema<unknown>(tool.outputSchema as JsonSchemaType)
       : undefined;

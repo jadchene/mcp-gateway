@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { fromJsonSchema, type JsonSchemaType } from "@modelcontextprotocol/server";
 import { buildGatewayTools, McpGatewayEngine } from "../src/gateway-engine.ts";
 import { Logger } from "../src/logger.ts";
 import { matchesToolNamePattern } from "../src/tool-name-pattern.ts";
@@ -108,7 +109,7 @@ test("McpGatewayEngine rejects invalid toolName values for schema lookup", () =>
   assert.throws(
     () => engine.getToolSchema({
       serviceId: "playwright",
-      toolName: "browser_tabs"
+      toolName: " "
     }),
     /toolName.*non-empty string array/
   );
@@ -135,7 +136,7 @@ test("McpGatewayEngine rejects invalid toolName values for schema lookup", () =>
   );
 });
 
-test("McpGatewayEngine rejects a batch schema lookup when any tool is unknown", () => {
+test("McpGatewayEngine retains valid schemas when some tool names are unknown", () => {
   const engine = createGatewayEngineForTest(createRegistryStub({
     tools: [
       {
@@ -146,13 +147,21 @@ test("McpGatewayEngine rejects a batch schema lookup when any tool is unknown", 
     ]
   }));
 
-  assert.throws(
-    () => engine.getToolSchema({
-      serviceId: "playwright",
-      toolName: ["browser_tabs", "browser_missing"]
-    }),
-    /Unknown tool 'browser_missing'/
-  );
+  const result = engine.getToolSchema({
+    serviceId: "playwright",
+    toolName: ["browser_tabs", "browser_missing"]
+  });
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(result.content, []);
+  assert.deepEqual(result.structuredContent, {
+    schemas: { browser_tabs: { inputSchema: { type: "object" }, outputSchema: null } },
+    errors: { browser_missing: "Unknown tool in service 'playwright'." }
+  });
+  const missing = engine.getToolSchema({ serviceId: "playwright", toolName: "absent" });
+  assert.equal(missing.isError, true);
+  assert.deepEqual(missing.structuredContent, {
+    schemas: {}, errors: { absent: "Unknown tool in service 'playwright'." }
+  });
 });
 
 test("McpGatewayEngine returns a minimal service list payload", () => {
@@ -178,43 +187,16 @@ test("McpGatewayEngine returns a minimal service list payload", () => {
   });
 });
 
-test("McpGatewayEngine advertises service list filters", () => {
-  const tool = buildGatewayTools().find((candidate) => candidate.name === "gateway_list_services") as {
-    description?: string;
-    inputSchema?: {
-      properties?: Record<string, unknown>;
-      required?: string[];
-    };
-  } | undefined;
-
-  assert.equal(tool?.description, "Lists downstream MCP services by case-insensitive identifier or description substring filters and optional availability.");
-  assert.deepEqual(tool?.inputSchema?.required, []);
-  assert.deepEqual(tool?.inputSchema?.properties?.serviceId, {
-    type: "array",
-    description: "Optional unique service identifier substrings. Matching is case-insensitive; identifier and description filters use OR.",
-    minItems: 1,
-    uniqueItems: true,
-    items: {
-      type: "string",
-      minLength: 1,
-      pattern: "\\S"
-    }
-  });
-  assert.deepEqual(tool?.inputSchema?.properties?.desc, {
-    type: "array",
-    description: "Optional unique description substrings. Matching is case-insensitive; identifier and description filters use OR.",
-    minItems: 1,
-    uniqueItems: true,
-    items: {
-      type: "string",
-      minLength: 1,
-      pattern: "\\S"
-    }
-  });
-  assert.deepEqual(tool?.inputSchema?.properties?.available, {
-    type: "boolean",
-    description: "Optionally limits results to services with the requested current availability."
-  });
+test("McpGatewayEngine advertises distinct filter and exact identifier names", () => {
+  const definitions = Object.fromEntries(buildGatewayTools().map(tool => [tool.name, tool]));
+  assert.deepEqual(Object.keys(definitions.gateway_list_services.inputSchema.properties as object), [
+    "serviceIdFilter", "descFilter", "availableFilter"
+  ]);
+  assert.deepEqual(Object.keys(definitions.gateway_list_tools.inputSchema.properties as object), [
+    "serviceId", "toolNameFilter", "descFilter", "includeSchema"
+  ]);
+  assert.deepEqual(definitions.gateway_list_services.inputSchema.required, []);
+  assert.deepEqual(definitions.gateway_list_tools.inputSchema.required, ["serviceId"]);
 });
 
 test("McpGatewayEngine filters services by identifier, description, and availability", () => {
@@ -228,8 +210,8 @@ test("McpGatewayEngine filters services by identifier, description, and availabi
   }));
 
   const textResult = engine.listServices({
-    serviceId: ["BASE", "ssh"],
-    desc: ["repository host"]
+    serviceIdFilter: ["BASE", "ssh"],
+    descFilter: ["repository host"]
   }) as { structuredContent?: { services?: Array<{ serviceId?: string }> } };
   assert.deepEqual(textResult.structuredContent?.services?.map((service) => service.serviceId), [
     "database",
@@ -238,13 +220,13 @@ test("McpGatewayEngine filters services by identifier, description, and availabi
   ]);
 
   const availabilityResult = engine.listServices({
-    serviceId: ["base"],
-    desc: ["JETBRAINS"],
-    available: false
+    serviceIdFilter: ["base"],
+    descFilter: ["JETBRAINS"],
+    availableFilter: false
   }) as { structuredContent?: { services?: Array<{ serviceId?: string }> } };
   assert.deepEqual(availabilityResult.structuredContent?.services?.map((service) => service.serviceId), ["idea"]);
 
-  const availableOnlyResult = engine.listServices({ available: true }) as {
+  const availableOnlyResult = engine.listServices({ availableFilter: true }) as {
     structuredContent?: { services?: Array<{ serviceId?: string }> };
   };
   assert.deepEqual(availableOnlyResult.structuredContent?.services?.map((service) => service.serviceId), [
@@ -257,18 +239,18 @@ test("McpGatewayEngine filters services by identifier, description, and availabi
 test("McpGatewayEngine rejects invalid service list filters", () => {
   const engine = createGatewayEngineForTest(createRegistryStub({}));
 
-  for (const serviceId of ["database", [], ["database", "database"], [" "]]) {
+  for (const serviceIdFilter of ["", " ", 1, [], ["database", "database"], [" "]]) {
     assert.throws(
-      () => engine.listServices({ serviceId }),
+      () => engine.listServices({ serviceIdFilter }),
       /serviceId.*unique non-empty string array/
     );
   }
   assert.throws(
-    () => engine.listServices({ desc: "database" }),
+    () => engine.listServices({ descFilter: " " }),
     /desc.*unique non-empty string array/
   );
   assert.throws(
-    () => engine.listServices({ available: "true" }),
+    () => engine.listServices({ availableFilter: "true" }),
     /available.*must be a boolean/
   );
 });
@@ -281,64 +263,35 @@ test("McpGatewayEngine advertises includeSchema on gateway_list_tools", () => {
   } | undefined;
 
   assert.deepEqual(tool?.inputSchema?.properties?.includeSchema, {
-    type: "boolean",
-    description: "Includes inputSchema and outputSchema in every returned tool when true. Defaults to false."
+    description: "Include inputSchema and outputSchema. Omitted or null: false.",
+    anyOf: [
+      { type: "boolean" },
+      { type: "null" }
+    ]
   });
 });
 
-test("McpGatewayEngine advertises description keyword filtering on gateway_list_tools", () => {
-  const tool = buildGatewayTools().find((candidate) => candidate.name === "gateway_list_tools") as {
-    description?: string;
-    inputSchema?: {
-      properties?: Record<string, unknown>;
-    };
-  } | undefined;
-
-  assert.equal(tool?.description, "Lists downstream tools by case-insensitive name or description substring filters and optionally includes each matching schema.");
-  assert.deepEqual(tool?.inputSchema?.properties?.toolName, {
-    type: "array",
-    description: "Optional unique name substrings. Matching is case-insensitive; any name or description keyword may match.",
-    minItems: 1,
-    uniqueItems: true,
-    items: {
-      type: "string",
-      minLength: 1,
-      pattern: "\\S"
+test("McpGatewayEngine schemas accept scalar and array text filters and reject invalid values", async () => {
+  for (const [name, fields, required] of [
+    ["gateway_list_services", ["serviceIdFilter", "descFilter"], {}],
+    ["gateway_list_tools", ["toolNameFilter", "descFilter"], { serviceId: "playwright" }],
+    ["gateway_get_tool_schema", ["toolName"], { serviceId: "playwright" }]
+  ] as const) {
+    const tool = buildGatewayTools().find(tool => tool.name === name)!;
+    const schema = fromJsonSchema(tool.inputSchema as JsonSchemaType);
+    for (const field of fields) {
+      const nullResult = await schema["~standard"].validate({ ...required, [field]: null });
+      assert.equal(Boolean(nullResult.issues), name === "gateway_get_tool_schema");
+      for (const value of ["tabs", ["tabs"], ["tabs", "navigate"]]) {
+        const result = await schema["~standard"].validate({ ...required, [field]: value });
+        assert.equal(result.issues, undefined, name + "." + field);
+      }
+      for (const value of ["", " ", [], [""], ["tabs", "tabs"], 1, true, {}]) {
+        const result = await schema["~standard"].validate({ ...required, [field]: value });
+        assert.ok(result.issues, name + "." + field + " must reject " + JSON.stringify(value));
+      }
     }
-  });
-  assert.deepEqual(tool?.inputSchema?.properties?.desc, {
-    type: "array",
-    description: "Optional unique literal description substrings. Matching is case-insensitive and may hit negative guidance, so inspect candidate descriptions. Name and description filters use OR.",
-    minItems: 1,
-    uniqueItems: true,
-    items: {
-      type: "string",
-      minLength: 1,
-      pattern: "\\S"
-    }
-  });
-});
-
-test("McpGatewayEngine advertises array-only tool names for gateway_get_tool_schema", () => {
-  const tool = buildGatewayTools().find((candidate) => candidate.name === "gateway_get_tool_schema") as {
-    description?: string;
-    inputSchema?: {
-      properties?: Record<string, unknown>;
-    };
-  } | undefined;
-
-  assert.equal(tool?.description, "Returns schemas for exact, case-sensitive downstream tool names, keyed by name; the whole request fails when any name is unknown.");
-  assert.deepEqual(tool?.inputSchema?.properties?.toolName, {
-    type: "array",
-    description: "Unique exact, case-sensitive downstream tool names returned by gateway_list_tools.",
-    minItems: 1,
-    uniqueItems: true,
-    items: {
-      type: "string",
-      minLength: 1,
-      pattern: "\\S"
-    }
-  });
+  }
 });
 
 test("McpGatewayEngine advertises stable output schemas and leaves forwarded results open", () => {
@@ -373,7 +326,7 @@ test("McpGatewayEngine advertises stable output schemas and leaves forwarded res
       schemas?: Record<string, unknown>;
     };
   };
-  assert.equal(schemaOutput.properties?.schemas?.minProperties, 1);
+  assert.equal(schemaOutput.properties?.schemas?.minProperties, undefined);
 });
 
 test("McpGatewayEngine advertises non-blank identifiers and explicit side effects", () => {
@@ -391,29 +344,29 @@ test("McpGatewayEngine advertises non-blank identifiers and explicit side effect
     inputSchema?: { properties?: Record<string, unknown> };
   };
 
-  assert.equal(getService.description, "Returns one downstream service's configured identity, availability, recent error and connection time, protocol version, and server information.");
+  assert.equal(getService.description, "Inspects a service's connection status, server metadata, and last error.");
   assert.deepEqual(getService.inputSchema?.properties?.serviceId, {
     type: "string",
-    description: "Logical downstream service identifier returned by gateway_list_services.",
+    description: "Exact, case-sensitive service ID from gateway_list_services.",
     minLength: 1,
     pattern: "\\S"
   });
-  assert.equal(manageService.description, "Reconnects a downstream service without changing config, or persistently enables or disables it in the gateway config and reloads the registry.");
+  assert.equal(manageService.description, "Reconnects, enables, or disables a configured service.");
   assert.deepEqual(manageService.inputSchema?.properties?.action, {
     type: "string",
-    description: "reconnect refreshes the connection and metadata without changing config; enable and disable persist the enable flag and reload the registry.",
+    description: "reconnect refreshes the connection; enable and disable persist to config.",
     enum: ["reconnect", "enable", "disable"]
   });
-  assert.equal(callTool.description, "Calls one exact downstream tool and forwards its result unchanged. The downstream tool may have read or write side effects; inspect its schema and service rules first.");
+  assert.equal(callTool.description, "Calls one downstream tool and forwards its result. Side effects and confirmation requirements depend on that tool.");
   assert.deepEqual(callTool.inputSchema?.properties?.toolName, {
     type: "string",
-    description: "Exact, case-sensitive downstream tool name returned by gateway_list_tools.",
+    description: "Exact, case-sensitive tool name from gateway_list_tools.",
     minLength: 1,
     pattern: "\\S"
   });
   assert.deepEqual(callTool.inputSchema?.properties?.arguments, {
     type: "object",
-    description: "Required arguments object built from the downstream inputSchema. Pass an empty object when the tool has no arguments."
+    description: "Downstream tool arguments matching its inputSchema. Use {} for no arguments."
   });
 });
 
@@ -461,7 +414,7 @@ test("McpGatewayEngine filters listed tools by tool name keyword", () => {
 
   const result = engine.listTools({
     serviceId: "playwright",
-    toolName: ["table"]
+    toolNameFilter: ["table"]
   }) as { structuredContent?: { tools?: Array<Record<string, unknown>> } };
 
   assert.deepEqual(result.structuredContent, {
@@ -505,7 +458,7 @@ test("McpGatewayEngine filters listed tools by multiple tool name keywords", () 
 
   const result = engine.listTools({
     serviceId: "playwright",
-    toolName: ["describe", "issues"]
+    toolNameFilter: ["describe", "issues"]
   }) as { structuredContent?: { tools?: Array<Record<string, unknown>> } };
 
   assert.deepEqual(result.structuredContent, {
@@ -528,28 +481,28 @@ test("McpGatewayEngine rejects invalid toolName values for tool listing", () => 
   assert.throws(
     () => engine.listTools({
       serviceId: "playwright",
-      toolName: "table"
+      toolNameFilter: " "
     }),
     /toolName.*non-empty string array/
   );
   assert.throws(
     () => engine.listTools({
       serviceId: "playwright",
-      toolName: []
+      toolNameFilter: []
     }),
     /toolName.*non-empty string array/
   );
   assert.throws(
     () => engine.listTools({
       serviceId: "playwright",
-      toolName: ["table", "table"]
+      toolNameFilter: ["table", "table"]
     }),
     /toolName.*unique non-empty string array/
   );
   assert.throws(
     () => engine.listTools({
       serviceId: "playwright",
-      toolName: [" "]
+      toolNameFilter: [" "]
     }),
     /toolName.*unique non-empty string array/
   );
@@ -582,7 +535,7 @@ test("McpGatewayEngine filters listed tools by description keywords", () => {
 
   const result = engine.listTools({
     serviceId: "playwright",
-    desc: ["BASE OBJ", "MARY KE"]
+    descFilter: ["BASE OBJ", "MARY KE"]
   }) as { structuredContent?: { tools?: Array<Record<string, unknown>> } };
 
   assert.deepEqual(result.structuredContent, {
@@ -626,8 +579,8 @@ test("McpGatewayEngine combines name and description filters with OR", () => {
 
   const result = engine.listTools({
     serviceId: "playwright",
-    toolName: ["describe"],
-    desc: ["POSITORY TICK"]
+    toolNameFilter: ["describe"],
+    descFilter: ["POSITORY TICK"]
   }) as { structuredContent?: { tools?: Array<Record<string, unknown>> } };
 
   assert.deepEqual(result.structuredContent?.tools?.map((tool) => tool.name), [
@@ -642,28 +595,28 @@ test("McpGatewayEngine rejects invalid desc arguments", () => {
   assert.throws(
     () => engine.listTools({
       serviceId: "playwright",
-      desc: "database"
+      descFilter: " "
     }),
     /desc.*non-empty string array/
   );
   assert.throws(
     () => engine.listTools({
       serviceId: "playwright",
-      desc: []
+      descFilter: []
     }),
     /desc.*non-empty string array/
   );
   assert.throws(
     () => engine.listTools({
       serviceId: "playwright",
-      desc: ["database", "database"]
+      descFilter: ["database", "database"]
     }),
     /desc.*unique non-empty string array/
   );
   assert.throws(
     () => engine.listTools({
       serviceId: "playwright",
-      desc: [" "]
+      descFilter: [" "]
     }),
     /desc.*unique non-empty string array/
   );
@@ -1038,3 +991,72 @@ function createRegistryStub(overrides: {
 function createGatewayEngineForTest(registry: ReturnType<typeof createRegistryStub>): McpGatewayEngine {
   return new McpGatewayEngine(registry as never, new Logger());
 }
+
+test("McpGatewayEngine accepts equivalent scalar and array tool names", () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({
+    tools: [{ name: "browser_tabs", inputSchema: { type: "object" }, outputSchema: null }]
+  }));
+  assert.deepEqual(
+    engine.listTools({ serviceId: "playwright", toolNameFilter: "tabs" }),
+    engine.listTools({ serviceId: "playwright", toolNameFilter: ["tabs"] })
+  );
+  assert.deepEqual(
+    engine.getToolSchema({ serviceId: "playwright", toolName: "browser_tabs" }),
+    engine.getToolSchema({ serviceId: "playwright", toolName: ["browser_tabs"] })
+  );
+});
+
+test("McpGatewayEngine text filters preserve scalar and array equivalence", () => {
+  const engine = createGatewayEngineForTest(createRegistryStub({
+    services: [
+      { serviceId: "database", description: "Database access", available: true },
+      { serviceId: "ssh", description: "Remote shell", available: false }
+    ],
+    tools: [
+      { name: "browser_tabs", description: "List pages", inputSchema: null, outputSchema: null },
+      { name: "browser_close", description: "Close page", inputSchema: null, outputSchema: null }
+    ]
+  }));
+  for (const field of ["serviceIdFilter", "descFilter"]) {
+    const scalar = engine.listServices({ [field]: "BASE" });
+    assert.deepEqual(scalar, engine.listServices({ [field]: ["BASE"] }));
+    assert.deepEqual(scalar.structuredContent, {
+      services: [{ serviceId: "database", description: "Database access", available: true }]
+    });
+    assert.deepEqual(engine.listServices({ [field]: null }), engine.listServices({}));
+  }
+  for (const [field, value] of [["toolNameFilter", "TABS"], ["descFilter", "PAGES"]]) {
+    const scalar = engine.listTools({ serviceId: "playwright", [field]: value });
+    assert.deepEqual(scalar, engine.listTools({ serviceId: "playwright", [field]: [value] }));
+    assert.deepEqual(scalar.structuredContent, {
+      tools: [{ name: "browser_tabs", description: "List pages" }]
+    });
+    assert.deepEqual(engine.listTools({ serviceId: "playwright", [field]: null }), engine.listTools({ serviceId: "playwright" }));
+  }
+  assert.doesNotThrow(() => engine.listServices({}));
+  assert.doesNotThrow(() => engine.listTools({ serviceId: "playwright" }));
+  assert.deepEqual(engine.listServices({ availableFilter: null }), engine.listServices({}));
+  assert.deepEqual(engine.listTools({ serviceId: "playwright", includeSchema: null }), engine.listTools({ serviceId: "playwright" }));
+});
+
+test("Gateway schemas reject old filter names and accept null options", async () => {
+  for (const [name, required, invalid] of [
+    ["gateway_list_services", {}, [
+      { serviceId: "database" }, { desc: "database" }, { available: true }
+    ]],
+    ["gateway_list_tools", { serviceId: "playwright" }, [
+      { toolName: "tabs" }, { desc: "pages" }
+    ]]
+  ] as const) {
+    const tool = buildGatewayTools().find(tool => tool.name === name)!;
+    const schema = fromJsonSchema(tool.inputSchema as JsonSchemaType);
+    assert.equal((await schema["~standard"].validate(required)).issues, undefined);
+    const nullableOptions = name === "gateway_list_services"
+      ? { serviceIdFilter: null, descFilter: null, availableFilter: null }
+      : { toolNameFilter: null, descFilter: null, includeSchema: null };
+    assert.equal((await schema["~standard"].validate({ ...required, ...nullableOptions })).issues, undefined);
+    for (const args of invalid) {
+      assert.ok((await schema["~standard"].validate({ ...required, ...args })).issues);
+    }
+  }
+});

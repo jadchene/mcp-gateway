@@ -72,9 +72,9 @@ export class McpGatewayEngine {
    * Returns service summaries optionally matching identifiers, descriptions, and availability.
    */
   public listServices(args: JsonObject): DownstreamToolResult {
-    const serviceId = optionalUniqueNonEmptyStringArray(args.serviceId, "The 'serviceId' argument must be a unique non-empty string array when provided.");
-    const desc = optionalUniqueNonEmptyStringArray(args.desc, "The 'desc' argument must be a unique non-empty string array when provided.");
-    const available = optionalBoolean(args.available, "The 'available' argument must be a boolean when provided.");
+    const serviceId = optionalStringOrArray(args.serviceIdFilter, "The 'serviceIdFilter' argument must be a non-empty string or unique non-empty string array when provided.");
+    const desc = optionalStringOrArray(args.descFilter, "The 'descFilter' argument must be a non-empty string or unique non-empty string array when provided.");
+    const available = optionalBoolean(args.availableFilter, "The 'availableFilter' argument must be a boolean when provided.");
     const serviceIdKeywords = normalizeKeywords(serviceId);
     const descriptionKeywords = normalizeKeywords(desc);
     const services = this.registry.listServices().filter((snapshot) => {
@@ -117,8 +117,8 @@ export class McpGatewayEngine {
    */
   public listTools(args: JsonObject): DownstreamToolResult {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
-    const toolName = optionalUniqueNonEmptyStringArray(args.toolName, "The 'toolName' argument must be a unique non-empty string array when provided.");
-    const desc = optionalUniqueNonEmptyStringArray(args.desc, "The 'desc' argument must be a unique non-empty string array when provided.");
+    const toolName = optionalStringOrArray(args.toolNameFilter, "The 'toolNameFilter' argument must be a non-empty string or unique non-empty string array when provided.");
+    const desc = optionalStringOrArray(args.descFilter, "The 'descFilter' argument must be a non-empty string or unique non-empty string array when provided.");
     const includeSchema = optionalBoolean(args.includeSchema, "The 'includeSchema' argument must be a boolean when provided.") ?? false;
     return successContent({
       tools: this.registry.listTools(serviceId, toolName, desc).map((tool) => {
@@ -142,21 +142,30 @@ export class McpGatewayEngine {
    */
   public getToolSchema(args: JsonObject): DownstreamToolResult {
     const serviceId = requireString(args.serviceId, "The 'serviceId' argument must be a string.");
-    const toolNames = requireUniqueNonEmptyStringArray(args.toolName, "The 'toolName' argument must be a unique non-empty string array.");
-    const schemas = Object.fromEntries(toolNames.map((toolName) => {
+    const toolNames = requireStringOrArray(args.toolName, "The 'toolName' argument must be a non-empty string or unique non-empty string array.");
+    const found: Array<[string, JsonObject]> = [];
+    const missing: Array<[string, string]> = [];
+    for (const toolName of toolNames) {
       const tool = this.registry.getTool(serviceId, toolName);
 
       if (!tool) {
-        throw new Error(`Unknown tool '${toolName}' in service '${serviceId}'.`);
+        missing.push([toolName, `Unknown tool in service '${serviceId}'.`]);
+        continue;
       }
 
-      return [toolName, {
+      found.push([toolName, {
         inputSchema: tool.inputSchema ?? null,
         outputSchema: tool.outputSchema ?? null
-      }] as const;
-    }));
+      }]);
+    }
 
-    return successContent({ schemas });
+    return {
+      ...successContent({
+        schemas: Object.fromEntries(found),
+        ...(missing.length ? { errors: Object.fromEntries(missing) } : {})
+      }),
+      ...(found.length === 0 ? { isError: true } : {})
+    };
   }
 
   /**
@@ -211,56 +220,56 @@ export function buildGatewayTools(options: { includeAdminTools?: boolean } = {})
   const tools: GatewayToolDefinition[] = [
     {
       name: "gateway_list_services",
-      description: "Lists downstream MCP services by case-insensitive identifier or description substring filters and optional availability.",
+      description: "Finds enabled services. Text filters use case-insensitive substrings joined by OR; availability further limits matches.",
       inputSchema: objectSchema([], {
-        serviceId: uniqueNonEmptyStringArraySchema("Optional unique service identifier substrings. Matching is case-insensitive; identifier and description filters use OR."),
-        desc: uniqueNonEmptyStringArraySchema("Optional unique description substrings. Matching is case-insensitive; identifier and description filters use OR."),
-        available: {
+        serviceIdFilter: stringOrArraySchema("Service ID keywords."),
+        descFilter: stringOrArraySchema("Description keywords."),
+        availableFilter: {
           type: "boolean",
-          description: "Optionally limits results to services with the requested current availability."
+          description: "true: available services; false: unavailable services; omitted or null: either."
         }
       }),
       outputSchema: outputSchemas.listServices
     },
     {
       name: "gateway_get_service",
-      description: "Returns one downstream service's configured identity, availability, recent error and connection time, protocol version, and server information.",
+      description: "Inspects a service's connection status, server metadata, and last error.",
       inputSchema: objectSchema(["serviceId"], {
-        serviceId: stringSchema("Logical downstream service identifier returned by gateway_list_services.")
+        serviceId: stringSchema("Exact, case-sensitive service ID from gateway_list_services.")
       }),
       outputSchema: outputSchemas.getService
     },
     {
       name: "gateway_list_tools",
-      description: "Lists downstream tools by case-insensitive name or description substring filters and optionally includes each matching schema.",
+      description: "Finds tools within one service. Text filters use case-insensitive substrings joined by OR.",
       inputSchema: objectSchema(["serviceId"], {
-        serviceId: stringSchema("Logical downstream service identifier returned by gateway_list_services."),
-        toolName: uniqueNonEmptyStringArraySchema("Optional unique name substrings. Matching is case-insensitive; any name or description keyword may match."),
-        desc: uniqueNonEmptyStringArraySchema("Optional unique literal description substrings. Matching is case-insensitive and may hit negative guidance, so inspect candidate descriptions. Name and description filters use OR."),
+        serviceId: stringSchema("Exact, case-sensitive service ID from gateway_list_services."),
+        toolNameFilter: stringOrArraySchema("Tool name keywords."),
+        descFilter: stringOrArraySchema("Description keywords. Matches may include negative guidance."),
         includeSchema: {
           type: "boolean",
-          description: "Includes inputSchema and outputSchema in every returned tool when true. Defaults to false."
+          description: "Include inputSchema and outputSchema. Omitted or null: false."
         }
       }),
       outputSchema: outputSchemas.listTools
     },
     {
       name: "gateway_get_tool_schema",
-      description: "Returns schemas for exact, case-sensitive downstream tool names, keyed by name; the whole request fails when any name is unknown.",
+      description: "Returns schemas keyed by tool name. Unknown names appear in errors; valid schemas are retained.",
       inputSchema: objectSchema(["serviceId", "toolName"], {
-        serviceId: stringSchema("Logical downstream service identifier returned by gateway_list_services."),
-        toolName: uniqueNonEmptyStringArraySchema("Unique exact, case-sensitive downstream tool names returned by gateway_list_tools.")
+        serviceId: stringSchema("Exact, case-sensitive service ID from gateway_list_services."),
+        toolName: stringOrArraySchema("Exact, case-sensitive tool names from gateway_list_tools.")
       }),
       outputSchema: outputSchemas.getToolSchema
     },
     {
       name: "gateway_manage_service",
-      description: "Reconnects a downstream service without changing config, or persistently enables or disables it in the gateway config and reloads the registry.",
+      description: "Reconnects, enables, or disables a configured service.",
       inputSchema: objectSchema(["serviceId", "action"], {
-        serviceId: stringSchema("Logical downstream service identifier returned by gateway_list_services."),
+        serviceId: stringSchema("Exact, case-sensitive service ID from configuration. Disabled services are absent from gateway_list_services."),
         action: {
           type: "string",
-          description: "reconnect refreshes the connection and metadata without changing config; enable and disable persist the enable flag and reload the registry.",
+          description: "reconnect refreshes the connection; enable and disable persist to config.",
           enum: ["reconnect", "enable", "disable"]
         }
       }),
@@ -268,17 +277,31 @@ export function buildGatewayTools(options: { includeAdminTools?: boolean } = {})
     },
     {
       name: "gateway_call_tool",
-      description: "Calls one exact downstream tool and forwards its result unchanged. The downstream tool may have read or write side effects; inspect its schema and service rules first.",
+      description: "Calls one downstream tool and forwards its result. Side effects and confirmation requirements depend on that tool.",
       inputSchema: objectSchema(["serviceId", "toolName", "arguments"], {
-        serviceId: stringSchema("Logical downstream service identifier returned by gateway_list_services."),
-        toolName: stringSchema("Exact, case-sensitive downstream tool name returned by gateway_list_tools."),
+        serviceId: stringSchema("Exact, case-sensitive service ID from gateway_list_services."),
+        toolName: stringSchema("Exact, case-sensitive tool name from gateway_list_tools."),
         arguments: {
           type: "object",
-          description: "Required arguments object built from the downstream inputSchema. Pass an empty object when the tool has no arguments."
+          description: "Downstream tool arguments matching its inputSchema. Use {} for no arguments."
         }
       })
     }
   ];
+  // 可选参数允许显式传 null，运行时统一按未传处理。
+  for (const tool of tools) {
+    const required = tool.inputSchema.required as string[];
+    const properties = tool.inputSchema.properties as Record<string, JsonObject>;
+    for (const [name, schema] of Object.entries(properties)) {
+      if (!required.includes(name)) {
+        const { description, ...shape } = schema;
+        properties[name] = {
+          ...(description ? { description } : {}),
+          ...nullableSchema(shape)
+        };
+      }
+    }
+  }
   return options.includeAdminTools === false
     ? tools.filter((tool) => tool.name !== "gateway_manage_service")
     : tools;
@@ -318,16 +341,11 @@ function formatServiceSummary(snapshot: ServiceRuntimeSnapshot): JsonObject {
 }
 
 /**
- * Builds a standard MCP tool success payload with text and structured content.
+ * 返回单份结构化结果，避免在文本内容中重复同一份 JSON。
  */
 function successContent(data: JsonObject): DownstreamToolResult {
   return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(data, null, 2)
-      }
-    ],
+    content: [],
     structuredContent: data
   };
 }
@@ -396,11 +414,14 @@ function buildGatewayOutputSchemas(): Record<"listServices" | "getService" | "li
     getToolSchema: objectSchema(["schemas"], {
       schemas: {
         type: "object",
-        minProperties: 1,
         additionalProperties: objectSchema(["inputSchema", "outputSchema"], {
           inputSchema: nullableToolSchema,
           outputSchema: nullableToolSchema
         })
+      },
+      errors: {
+        type: "object",
+        additionalProperties: { type: "string" }
       }
     }),
     manageService: objectSchema(["serviceId", "action", "enabled", "available"], {
@@ -454,6 +475,15 @@ function uniqueNonEmptyStringArraySchema(description: string): JsonObject {
 }
 
 /**
+ * 接受单个非空字符串或非空且不重复的字符串数组。
+ */
+function stringOrArraySchema(description: string): JsonObject {
+  const { description: _stringDescription, ...string } = stringSchema(description);
+  const { description: _arrayDescription, ...array } = uniqueNonEmptyStringArraySchema(description);
+  return { description, anyOf: [string, array] };
+}
+
+/**
  * Ensures the input is a plain object.
  */
 function toObject(input: unknown, message: string): JsonObject {
@@ -474,11 +504,15 @@ function requireString(input: unknown, message: string): string {
 }
 
 /**
- * Returns an optional unique non-empty array of non-empty strings.
+ * 将字符串或字符串数组统一为非空且不重复的字符串数组。
  */
-function optionalUniqueNonEmptyStringArray(input: unknown, message: string): string[] | undefined {
+function optionalStringOrArray(input: unknown, message: string): string[] | undefined {
   if (input === undefined || input === null) {
     return undefined;
+  }
+
+  if (typeof input === "string") {
+    input = [input];
   }
 
   if (
@@ -494,10 +528,10 @@ function optionalUniqueNonEmptyStringArray(input: unknown, message: string): str
 }
 
 /**
- * Returns a required unique non-empty string array.
+ * 校验必填字符串或字符串数组并统一返回数组。
  */
-function requireUniqueNonEmptyStringArray(input: unknown, message: string): string[] {
-  const values = optionalUniqueNonEmptyStringArray(input, message);
+function requireStringOrArray(input: unknown, message: string): string[] {
+  const values = optionalStringOrArray(input, message);
   if (!values) {
     throw new Error(message);
   }

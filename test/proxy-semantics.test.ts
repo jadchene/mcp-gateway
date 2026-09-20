@@ -35,6 +35,57 @@ import {
 } from "../src/mcp/server.ts";
 import { ServiceRegistry } from "../src/service-registry.ts";
 
+test("gateway returns actionable input errors over modern HTTP", async () => {
+  await withProxy(async ({ client }) => {
+    for (const [name, args, expected] of [
+      ["gateway_list_services", { serviceId: "demo" }, /Unsupported parameter "serviceId".*serviceIdFilter/],
+      ["gateway_list_tools", { serviceId: "downstream", toolNameFilter: [] }, /toolNameFilter: Array must not be empty/]
+    ] as const) {
+      const result = await client.callTool({ name, arguments: args });
+      assert.equal(result.isError, true);
+      const text = result.content.filter(item => item.type === "text").map(item => item.text).join("\n");
+      assert.match(text, expected);
+      assert.doesNotMatch(text, /anyOf/);
+    }
+  });
+});
+
+test("gateway discovery returns one structured copy and retains partial schema results over HTTP", async () => {
+  await withProxy(async ({ client }) => {
+    const services = await client.callTool({ name: "gateway_list_services", arguments: {} });
+    assert.deepEqual(services.content, []);
+    assert.ok(services.structuredContent);
+    const result = await client.callTool({
+      name: "gateway_get_tool_schema",
+      arguments: { serviceId: "downstream", toolName: ["arbitrary_json", "missing_tool"] }
+    });
+    assert.deepEqual(result.content, []);
+    assert.notEqual(result.isError, true);
+    const data = result.structuredContent as { schemas: Record<string, unknown>; errors: Record<string, string> };
+    assert.ok(data.schemas.arbitrary_json);
+    assert.ok(data.errors.missing_tool);
+  });
+});
+
+for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
+  test(`gateway returns structured discovery and partial schemas on ${protocolVersion}`, async () => {
+    await withLegacyInMemoryProxy(async ({ client }) => {
+      const services = await client.callTool({ name: "gateway_list_services", arguments: {} });
+      assert.deepEqual(services.content, []);
+      assert.ok(services.structuredContent);
+      const result = await client.callTool({
+        name: "gateway_get_tool_schema",
+        arguments: { serviceId: "downstream", toolName: ["arbitrary_json", "missing_tool"] }
+      });
+      assert.deepEqual(result.content, []);
+      assert.notEqual(result.isError, true);
+      const data = result.structuredContent as { schemas: Record<string, unknown>; errors: Record<string, string> };
+      assert.ok(data.schemas.arbitrary_json);
+      assert.ok(data.errors.missing_tool);
+    }, protocolVersion);
+  });
+}
+
 test("gateway proxies modern MRTR state and input responses across two tool layers", async () => {
   await withProxy(async ({ client }) => {
     const first = await client.callTool({
@@ -130,7 +181,7 @@ test("gateway hides schemas and rejects calls for configured disabled tools", as
       arguments: { serviceId: "downstream", toolName: ["arbitrary_json"] }
     });
     assert.equal(schema.isError, true);
-    assert.match(schema.content.find((item) => item.type === "text")?.text ?? "", /Unknown tool 'arbitrary_json'/);
+    assert.deepEqual(schema.structuredContent, { schemas: {}, errors: { arbitrary_json: "Unknown tool in service 'downstream'." } });
 
     const call = await client.callTool({
       name: "gateway_call_tool",
