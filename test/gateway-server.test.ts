@@ -794,7 +794,7 @@ test("McpGatewayEngine resumes gateway confirmation state after a config policy 
     clientCapabilities: { elicitation: { form: {} } },
     requestState: first.requestState,
     inputResponses: {
-      confirm: { action: "accept", content: { decision: "yes" } }
+      confirm: { action: "accept", content: {} }
     }
   });
   assert.deepEqual(completed, { content: [] });

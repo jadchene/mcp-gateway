@@ -234,15 +234,7 @@ function buildConfirmationRequest(state: InvocationState): InputRequiredResult {
           message: buildConfirmationMessage(state),
           requestedSchema: {
             type: "object",
-            properties: {
-              decision: {
-                type: "string",
-                title: "Run this tool call?",
-                description: "Choose yes to execute the displayed call or no to reject it.",
-                enum: ["yes", "no"]
-              }
-            },
-            required: ["decision"],
+            properties: {},
             additionalProperties: false
           }
         }
@@ -263,7 +255,7 @@ function buildConfirmationMessage(state: InvocationState): string {
     "Risk: Gateway policy requires explicit confirmation.",
     "Arguments:",
     JSON.stringify(state.args, null, 2),
-    "Choose yes to execute it or no to reject it."
+    "Accept to execute this exact call; decline or cancel to leave it unexecuted."
   ].join("\n");
 }
 
@@ -276,12 +268,10 @@ function supportsFormElicitation(capabilities: Record<string, unknown> | undefin
 }
 
 /**
- * Treats cancel, decline, malformed content, and a no decision as refusal.
+ * 仅在用户接受确认请求时执行；拒绝、取消或缺少响应均不执行。
  */
 function isConfirmed(response: ElicitResult | undefined): boolean {
-  return response?.action === "accept"
-    && isRecord(response.content)
-    && response.content.decision === "yes";
+  return response?.action === "accept";
 }
 
 /**

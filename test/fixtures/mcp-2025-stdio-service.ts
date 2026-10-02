@@ -54,4 +54,29 @@ server.registerTool(
   }
 );
 
+server.registerTool(
+  "mcp_2025_approval",
+  { inputSchema: z.object({ operation: z.string() }) },
+  async ({ operation }, context) => {
+    const response = context.mcpReq.inputResponses?.confirm as { action?: string } | undefined;
+    if (!response) {
+      return inputRequired({
+        inputRequests: {
+          confirm: inputRequired.elicit({
+            message: `Execute ${operation}`,
+            requestedSchema: z.object({}),
+            _meta: { trace: "legacy-approval" }
+          })
+        },
+        requestState: "stdio-approval-v1"
+      });
+    }
+    return {
+      content: [],
+      isError: response.action !== "accept",
+      structuredContent: { operation, executed: response.action === "accept" }
+    };
+  }
+);
+
 await server.connect(new StdioServerTransport());

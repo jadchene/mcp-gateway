@@ -11,6 +11,7 @@ import {
   isInputRequiredResult,
   type CallToolResult,
   type CallToolRequestParams,
+  type ElicitRequestFormParams,
   type InputRequiredResult
 } from "@modelcontextprotocol/client";
 import {
@@ -133,39 +134,127 @@ test("gateway proxies modern MRTR state and input responses across two tool laye
   });
 });
 
-test("gateway requires configured tool confirmation before a modern downstream call", async () => {
-  await withProxy(async ({ client }) => {
-    const call = {
-      name: "gateway_call_tool",
-      arguments: {
-        serviceId: "downstream",
-        toolName: "arbitrary_json",
-        arguments: {}
+for (const clientName of ["proxy-test", "codex-mcp-client"]) {
+  test(`gateway requires configured tool confirmation for ${clientName}`, async () => {
+    await withProxy(async ({ client }) => {
+      const call = {
+        name: "gateway_call_tool",
+        arguments: {
+          serviceId: "downstream",
+          toolName: "arbitrary_json",
+          arguments: {}
+        }
+      };
+      const first = await client.callTool(call, { allowInputRequired: true }) as unknown as InputRequiredResult;
+      assert.equal(isInputRequiredResult(first), true);
+      assert.ok(first.requestState);
+      assert.match(first.requestState, /^mcp-gateway-tool-confirmation-v1\./);
+      assert.equal(first.inputRequests?.confirm?.method, "elicitation/create");
+      const confirmationParams = first.inputRequests?.confirm?.params as {
+        message?: string;
+        requestedSchema?: { properties?: Record<string, unknown>; required?: string[] };
+      } | undefined;
+      assert.match(confirmationParams?.message ?? "", /Tool: "arbitrary_json"/);
+      assert.match(confirmationParams?.message ?? "", /Arguments:\n\{\}/);
+      assert.deepEqual(confirmationParams?.requestedSchema?.properties, {});
+      assert.equal(confirmationParams?.requestedSchema?.required, undefined);
+      const meta = (first.inputRequests?.confirm?.params as { _meta?: Record<string, unknown> })._meta;
+      assert.equal(meta?.codex_strict_auto_review, clientName === "codex-mcp-client" ? true : undefined);
+      if (meta) {
+        assert.equal(meta.codex_request_type, "approval_request");
+        assert.equal(meta.codex_approval_kind, "mcp_tool_call");
+        assert.equal(meta.codex_sensitive_action, true);
+        assert.equal(meta.tool_name, "arbitrary_json");
+        assert.deepEqual(meta.tool_params, {});
+        assert.equal(meta.persist, undefined);
       }
-    };
-    const first = await client.callTool(call, { allowInputRequired: true }) as unknown as InputRequiredResult;
-    assert.equal(isInputRequiredResult(first), true);
-    assert.ok(first.requestState);
-    assert.match(first.requestState, /^mcp-gateway-tool-confirmation-v1\./);
-    assert.equal(first.inputRequests?.confirm?.method, "elicitation/create");
-    const confirmationParams = first.inputRequests?.confirm?.params as {
-      message?: string;
-      requestedSchema?: { properties?: { decision?: { enum?: string[] } } };
-    } | undefined;
-    assert.match(confirmationParams?.message ?? "", /Tool: "arbitrary_json"/);
-    assert.match(confirmationParams?.message ?? "", /Arguments:\n\{\}/);
-    assert.deepEqual(confirmationParams?.requestedSchema?.properties?.decision?.enum, ["yes", "no"]);
 
-    const second = await client.callTool({
-      ...call,
-      requestState: first.requestState,
-      inputResponses: {
-        confirm: { action: "accept", content: { decision: "yes" } }
-      }
-    } as unknown as CallToolRequestParams, { allowInputRequired: true }) as CallToolResult;
-    assert.deepEqual(second.structuredContent, [1, true, null, { nested: "value" }]);
-  }, () => undefined, "2026-07-28", ["arbitrary_*"]);
-});
+      const second = await client.callTool({
+        ...call,
+        requestState: first.requestState,
+        inputResponses: {
+          confirm: { action: "accept", content: {} }
+        }
+      } as unknown as CallToolRequestParams, { allowInputRequired: true }) as CallToolResult;
+      assert.deepEqual(second.structuredContent, [1, true, null, { nested: "value" }]);
+    }, () => undefined, "2026-07-28", ["arbitrary_*"], [], clientName);
+  });
+}
+
+for (const clientName of ["proxy-test", "codex-mcp-client"]) {
+  for (const downstreamVersion of ["2026-07-28", "2025-11-25", "2025-06-18"] as const) {
+    test(`modern gateway forwards ${downstreamVersion} approvals for ${clientName}`, async () => {
+      await withProxy(async ({ client }) => {
+        const toolName = downstreamVersion === "2026-07-28" ? "needs_approval" : "mcp_2025_approval";
+        const call = {
+          name: "gateway_call_tool",
+          arguments: { serviceId: "downstream", toolName, arguments: { operation: "deploy-test" } }
+        };
+        for (const action of ["accept", "decline", "cancel"] as const) {
+          const first = await client.callTool(call, { allowInputRequired: true }) as unknown as InputRequiredResult;
+          assert.equal(isInputRequiredResult(first), true);
+          const [key, request] = Object.entries(first.inputRequests ?? {})[0]!;
+          assertApprovalRequest(request.params, clientName, toolName, { operation: "deploy-test" });
+          const result = await client.callTool({
+            ...call, requestState: first.requestState,
+            inputResponses: { [key]: action === "accept" ? { action, content: {} } : { action } }
+          } as unknown as CallToolRequestParams, { allowInputRequired: true }) as CallToolResult;
+          assert.equal(result.isError, action !== "accept");
+          assert.deepEqual(result.structuredContent, { operation: "deploy-test", executed: action === "accept" });
+        }
+      }, () => undefined, downstreamVersion, [], [], clientName);
+    });
+  }
+}
+
+for (const clientName of ["proxy-test", "codex-mcp-client"]) {
+  for (const upstreamVersion of ["2025-11-25", "2025-06-18"] as const) {
+    for (const downstreamVersion of ["2026-07-28", "2025-11-25", "2025-06-18"] as const) {
+      test(`${upstreamVersion} gateway forwards ${downstreamVersion} approvals for ${clientName}`, async () => {
+        await withLegacyInMemoryProxy(async ({ client }) => {
+          const toolName = downstreamVersion === "2026-07-28" ? "needs_approval" : "mcp_2025_approval";
+          let action: "accept" | "decline" | "cancel" = "accept";
+          let requests = 0;
+          client.setRequestHandler("elicitation/create", async (request) => {
+            requests += 1;
+            assertApprovalRequest(request.params, clientName, toolName, { operation: "deploy-test" });
+            return action === "accept" ? { action, content: {} } : { action };
+          });
+          for (action of ["accept", "decline", "cancel"] as const) {
+            const result = await client.callTool({
+              name: "gateway_call_tool",
+              arguments: { serviceId: "downstream", toolName, arguments: { operation: "deploy-test" } }
+            });
+            assert.equal(result.isError, action !== "accept");
+            assert.deepEqual(result.structuredContent, { operation: "deploy-test", executed: action === "accept" });
+          }
+          assert.equal(requests, 3);
+        }, upstreamVersion, downstreamVersion, false, [], clientName);
+      });
+    }
+  }
+}
+
+/** 核对实际经过 SDK 和传输层的审批请求，而非仅检查构造函数。 */
+function assertApprovalRequest(
+  value: unknown, clientName: string, toolName: string, toolParams: Record<string, unknown>
+): void {
+  const params = value as ElicitRequestFormParams;
+  assert.equal(params.mode, "form");
+  assert.deepEqual(params.requestedSchema.properties, {});
+  assert.ok(params._meta?.trace);
+  if (clientName === "codex-mcp-client") {
+    assert.equal(params._meta?.codex_request_type, "approval_request");
+    assert.equal(params._meta?.codex_approval_kind, "mcp_tool_call");
+    assert.equal(params._meta?.codex_strict_auto_review, true);
+    assert.equal(params._meta?.codex_sensitive_action, true);
+    assert.equal(params._meta?.tool_name, toolName);
+    assert.deepEqual(params._meta?.tool_params, toolParams);
+    assert.equal(params._meta?.persist, undefined);
+  } else {
+    assert.equal(params._meta?.codex_request_type, undefined);
+  }
+}
 
 test("gateway hides schemas and rejects calls for configured disabled tools", async () => {
   await withProxy(async ({ client }) => {
@@ -479,7 +568,8 @@ async function withProxy(
   onDownstreamCancelled: (cancelled: boolean) => void = () => undefined,
   downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28",
   confirmationRequiredTools: string[] = [],
-  disabledTools: string[] = []
+  disabledTools: string[] = [],
+  clientName = "proxy-test"
 ): Promise<void> {
   const downstream = downstreamProtocolVersion === "2026-07-28"
     ? await startDownstream(onDownstreamCancelled)
@@ -515,7 +605,7 @@ async function withProxy(
   }, engine, logger);
   await gateway.start();
 
-  const client = new Client({ name: "proxy-test", version: "1.0.0" }, {
+  const client = new Client({ name: clientName, version: "1.0.0" }, {
     capabilities: { elicitation: { form: {} } },
     versionNegotiation: { mode: { pin: "2026-07-28" } },
     supportedProtocolVersions: ["2026-07-28"],
@@ -538,7 +628,8 @@ async function withLegacyInMemoryProxy(
   protocolVersion: "2025-11-25" | "2025-06-18",
   downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28",
   useLegacyElicitationShorthand = false,
-  confirmationRequiredTools: string[] = []
+  confirmationRequiredTools: string[] = [],
+  clientName = `${protocolVersion}-proxy-test`
 ): Promise<void> {
   const downstream = downstreamProtocolVersion === "2026-07-28"
     ? await startDownstream(() => undefined)
@@ -566,18 +657,16 @@ async function withLegacyInMemoryProxy(
   await registry.initialize();
   const gatewayServer = createGatewayMcpServer(new McpGatewayEngine(registry, logger));
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: `${protocolVersion}-proxy-test`, version: "1.0.0" }, {
+  const client = new Client({ name: clientName, version: "1.0.0" }, {
     capabilities: useLegacyElicitationShorthand
       ? { elicitation: {} }
       : { elicitation: { form: {} } },
     supportedProtocolVersions: [protocolVersion]
   });
   client.setRequestHandler("elicitation/create", async (request) => {
-    const usesDecision = "requestedSchema" in request.params
-      && Object.hasOwn(request.params.requestedSchema.properties, "decision");
-    const content: Record<string, string | number | boolean | string[]> = usesDecision
-      ? { decision: "yes" }
-      : { confirmed: true };
+    const usesConfirmed = "requestedSchema" in request.params
+      && Object.hasOwn(request.params.requestedSchema.properties, "confirmed");
+    const content: Record<string, string | number | boolean | string[]> = usesConfirmed ? { confirmed: true } : {};
     return {
       action: "accept",
       content
@@ -648,6 +737,30 @@ async function startDownstream(
       content: [{ type: "text", text: "arbitrary" }],
       structuredContent: [1, true, null, { nested: "value" }]
     }));
+    server.registerTool(
+      "needs_approval",
+      { inputSchema: z.object({ operation: z.string() }) },
+      async ({ operation }, context) => {
+        const response = context.mcpReq.inputResponses?.confirm as { action?: string } | undefined;
+        if (!response) {
+          return inputRequired({
+            inputRequests: {
+              confirm: inputRequired.elicit({
+                message: `Execute ${operation}`,
+                requestedSchema: z.object({}),
+                _meta: { trace: "modern-approval" }
+              })
+            },
+            requestState: "modern-approval-v1"
+          });
+        }
+        return {
+          content: [],
+          isError: response.action !== "accept",
+          structuredContent: { operation, executed: response.action === "accept" }
+        };
+      }
+    );
     server.registerTool(
       "header_mirror",
       {

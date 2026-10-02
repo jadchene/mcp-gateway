@@ -179,6 +179,8 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 
 匹配 `confirmationRequiredTools` 的调用会展示服务、工具和参数，须由当前 MCP 会话确认后才执行；不支持表单确认的客户端无法调用。状态不确定的失败调用不会自动重试。
 
+Codex 客户端的网关确认及转发的空确认表单会附带自动审查元数据。自动审查是可选能力：Codex 启用 `approvals_reviewer = "auto_review"` 时由其策略决定审批结果；未启用时按正常的 Accept / Decline / Cancel 操作；需要用户填写的表单保持原样。
+
 当一个工具同时匹配 `disabledTools` 和 `confirmationRequiredTools` 时，`disabledTools` 优先：工具会被隐藏并直接拒绝，不会发起确认。
 
 支持 Skills 的 Agent 可以使用仓库内置的 [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) 完成工具发现和调用。

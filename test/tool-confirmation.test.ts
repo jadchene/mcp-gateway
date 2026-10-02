@@ -43,13 +43,14 @@ test("ToolConfirmationInterceptor invokes only after explicit acceptance", async
   assert.equal(request?.method, "elicitation/create");
   const params = request?.params as {
     message?: string;
-    requestedSchema?: { properties?: { decision?: { enum?: string[] } } };
+    requestedSchema?: { properties?: Record<string, unknown>; required?: string[] };
   } | undefined;
   assert.match(params?.message ?? "", /Service: "demo"/);
   assert.match(params?.message ?? "", /Tool: "deploy"/);
   assert.match(params?.message ?? "", /"environment": "production"/);
   assert.match(params?.message ?? "", /Risk: Gateway policy requires explicit confirmation/);
-  assert.deepEqual(params?.requestedSchema?.properties?.decision?.enum, ["yes", "no"]);
+  assert.deepEqual(params?.requestedSchema?.properties, {});
+  assert.equal(params?.requestedSchema?.required, undefined);
   assert.equal(contexts.length, 0);
 
   const result = await interceptor.execute(
@@ -60,7 +61,7 @@ test("ToolConfirmationInterceptor invokes only after explicit acceptance", async
       clientCapabilities: FORM_CAPABILITIES,
       requestState: first.requestState,
       inputResponses: {
-        confirm: { action: "accept", content: { decision: "yes" } }
+        confirm: { action: "accept" }
       }
     },
     invoke
@@ -71,11 +72,11 @@ test("ToolConfirmationInterceptor invokes only after explicit acceptance", async
   assert.equal(contexts[0]?.inputResponses, undefined);
 });
 
-test("ToolConfirmationInterceptor does not invoke after decline or a no decision", async () => {
+test("ToolConfirmationInterceptor does not invoke after decline, cancel, or a missing action", async () => {
   for (const response of [
     { action: "decline" },
     { action: "cancel" },
-    { action: "accept", content: { decision: "no" } }
+    {}
   ]) {
     const interceptor = new ToolConfirmationInterceptor();
     let calls = 0;
@@ -130,7 +131,7 @@ test("ToolConfirmationInterceptor rejects a retry whose invocation changed", asy
         clientCapabilities: FORM_CAPABILITIES,
         requestState: first.requestState,
         inputResponses: {
-          confirm: { action: "accept", content: { decision: "yes" } }
+          confirm: { action: "accept", content: {} }
         }
       },
       async () => ({ content: [] })
@@ -159,7 +160,7 @@ test("ToolConfirmationInterceptor preserves approval across downstream input-req
       clientCapabilities: FORM_CAPABILITIES,
       requestState: first.requestState,
       inputResponses: {
-        confirm: { action: "accept", content: { decision: "yes" } }
+        confirm: { action: "accept", content: {} }
       }
     },
     async () => {

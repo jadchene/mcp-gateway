@@ -2,6 +2,8 @@ import { Logger } from "./logger.ts";
 import { ServiceRegistry } from "./service-registry.ts";
 import type { DownstreamCallContext, DownstreamToolResult } from "./mcp/client-types.ts";
 import { ToolConfirmationInterceptor } from "./mcp/tool-confirmation.ts";
+import { withCodexApprovalMeta } from "./mcp/codex-approval.ts";
+import { isInputRequiredResult, type ElicitRequestFormParams } from "@modelcontextprotocol/client";
 import { matchesAnyToolNamePattern } from "./tool-name-pattern.ts";
 import type { JsonObject, ServiceRuntimeSnapshot } from "./types.ts";
 
@@ -187,13 +189,34 @@ export class McpGatewayEngine {
     if (matchesAnyToolNamePattern(toolName, snapshot?.config.disabledTools)) {
       throw new Error(`Tool '${toolName}' in service '${serviceId}' is disabled by gateway configuration.`);
     }
+    const decorateApproval = (params: ElicitRequestFormParams): ElicitRequestFormParams => withCodexApprovalMeta(
+      params, context.clientInfo, toolName, toolArgs, serviceId, snapshot?.config.name
+    );
+    const callContext: DownstreamCallContext = context.elicitForm
+      ? {
+          ...context,
+          elicitForm: (params, signal) => context.elicitForm!(decorateApproval(params), signal)
+        }
+      : context;
+    let result: DownstreamToolResult;
     if (
       this.toolConfirmation.handlesState(context.requestState)
       || matchesAnyToolNamePattern(toolName, snapshot?.config.confirmationRequiredTools)
     ) {
-      return this.toolConfirmation.execute(serviceId, toolName, toolArgs, context, invoke);
+      result = await this.toolConfirmation.execute(serviceId, toolName, toolArgs, callContext, invoke);
+    } else {
+      result = await invoke(callContext);
     }
-    return invoke(context);
+    if (!isInputRequiredResult(result) || !result.inputRequests) return result;
+    return {
+      ...result,
+      inputRequests: Object.fromEntries(Object.entries(result.inputRequests).map(([key, request]) => {
+        const params = request.params;
+        return [key, request.method === "elicitation/create" && params && "requestedSchema" in params
+          ? { ...request, params: decorateApproval(params as ElicitRequestFormParams) }
+          : request];
+      }))
+    };
   }
 
   /**

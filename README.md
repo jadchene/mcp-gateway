@@ -179,6 +179,8 @@ The usual flow is `gateway_list_services` → `gateway_list_tools` → `gateway_
 
 Calls matching `confirmationRequiredTools` show the service, tool, and arguments and require approval in the current MCP session. Clients without form elicitation support cannot invoke them. Calls with uncertain outcomes are not retried automatically.
 
+For Codex clients, gateway confirmations and forwarded empty confirmation forms include automatic-review metadata. Automatic review is optional: when `approvals_reviewer = "auto_review"` is enabled in Codex, Codex policy decides approval; otherwise, use the normal Accept / Decline / Cancel confirmation. Forms requiring user input remain unchanged.
+
 `disabledTools` takes precedence over `confirmationRequiredTools` when both match. A disabled tool is hidden and rejected immediately without asking for confirmation.
 
 Agents with Skills support can use the included [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) for the discovery and calling workflow.

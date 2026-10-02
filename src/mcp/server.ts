@@ -1,5 +1,6 @@
 import {
   CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
   McpServer,
   fromJsonSchema,
   type CallToolResult,
@@ -58,7 +59,9 @@ export function createGatewayMcpServer(
         ...(outputSchema ? { outputSchema } : {})
       },
       async (args, context): Promise<CallToolResult | InputRequiredResult> => {
-        const downstreamContext = toDownstreamContext(context, server.server.getClientCapabilities());
+        const downstreamContext = toDownstreamContext(
+          context, server.server.getClientCapabilities(), server.server.getClientVersion()
+        );
         return engine.executeTool(
           tool.name,
           args,
@@ -76,10 +79,15 @@ export function createGatewayMcpServer(
  */
 function toDownstreamContext(
   context: ServerContext,
-  mcp2025ClientCapabilities: Record<string, unknown> | undefined
+  mcp2025ClientCapabilities: Record<string, unknown> | undefined,
+  mcp2025ClientInfo: Record<string, unknown> | undefined
 ): DownstreamCallContext {
   const envelope = context.mcpReq.envelope as Record<string, unknown> | undefined;
   const envelopeCapabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
+  const envelopeClientInfo = envelope?.[CLIENT_INFO_META_KEY];
+  const clientInfo = context.mcpReq.envelope
+    ? (isRecord(envelopeClientInfo) ? envelopeClientInfo : undefined)
+    : mcp2025ClientInfo;
   const clientCapabilities = isRecord(envelopeCapabilities)
     ? envelopeCapabilities
     : mcp2025ClientCapabilities;
@@ -89,6 +97,7 @@ function toDownstreamContext(
   return {
     signal: context.mcpReq.signal,
     ...(clientCapabilities ? { clientCapabilities } : {}),
+    ...(clientInfo ? { clientInfo } : {}),
     ...(context.mcpReq.inputResponses ? { inputResponses: context.mcpReq.inputResponses } : {}),
     ...(context.mcpReq.requestState<string>() ? { requestState: context.mcpReq.requestState<string>() } : {}),
     ...(!context.mcpReq.envelope

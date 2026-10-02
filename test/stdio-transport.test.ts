@@ -60,7 +60,7 @@ for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
       const metadata = await client.getMetadata();
       assert.equal(metadata.protocolEra, "legacy");
       assert.equal(metadata.protocolVersion, protocolVersion);
-      assert.deepEqual(metadata.tools.map((tool) => tool.name), ["mcp_2025_echo", "mcp_2025_confirm"]);
+      assert.deepEqual(metadata.tools.map((tool) => tool.name), ["mcp_2025_echo", "mcp_2025_confirm", "mcp_2025_approval"]);
       const result = await client.callTool("mcp_2025_echo", { message: protocolVersion });
       assert.deepEqual(result.structuredContent, { echoed: protocolVersion });
 
