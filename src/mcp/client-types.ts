@@ -18,7 +18,7 @@ export interface DownstreamCallContext {
    * Declares the upstream client's capabilities for this request.
    */
   clientCapabilities?: Record<string, unknown>;
-  /** 当前上游客户端的信息，仅用于选择审批元数据格式。 */
+  /** 当前调用的原始上游客户端身份，随请求传递给下游。 */
   clientInfo?: Record<string, unknown>;
   /**
    * Carries MRTR input responses from the upstream retry.

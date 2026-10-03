@@ -120,6 +120,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
       "serviceId": "local-tools",
       "name": "Local Tools",
       "confirmationRequiredTools": ["delete_*", "deploy_?"],
+      "codexAutoReview": false,
       "disabledTools": ["internal_*", "legacy_tool"],
       "transport": {
         "type": "stdio",
@@ -148,6 +149,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 | `enable` | 可选，默认为 `true`。 |
 | `callTimeoutMs` | 可选，下游工具调用超时；默认 120 秒。 |
 | `confirmationRequiredTools` | 可选，填写区分大小写的完整工具名 glob 模式；`*` 匹配零个或多个字符，`?` 匹配一个字符。数组项必须唯一且非空，网关在调用匹配的工具前会向上游用户发起表单 elicitation。 |
+| `codexAutoReview` | 可选 boolean，默认 `false`；设为 `true` 仅启用该服务的 `confirmationRequiredTools` 触发的网关自定义确认的 Codex 自动审批元数据。 |
 | `disabledTools` | 可选，使用相同 glob 语法。匹配的工具不会出现在工具列表和 schema 查询中，调用也会在到达下游服务前被拒绝。 |
 | `transport.type` | `stdio` 或 `http`。 |
 | `transport.command` | stdio 服务必填，启动命令。 |
@@ -179,7 +181,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 
 匹配 `confirmationRequiredTools` 的调用会展示服务、工具和参数，须由当前 MCP 会话确认后才执行；不支持表单确认的客户端无法调用。状态不确定的失败调用不会自动重试。
 
-Codex 客户端的网关确认及转发的空确认表单会附带自动审查元数据。自动审查是可选能力：Codex 启用 `approvals_reviewer = "auto_review"` 时由其策略决定审批结果；未启用时按正常的 Accept / Decline / Cancel 操作；需要用户填写的表单保持原样。
+Codex 自动审批扩展默认禁用；在指定服务的 `services[]` 配置块中显式设置 `"codexAutoReview": true`，仅为 `confirmationRequiredTools` 触发的网关自定义确认添加审批元数据。下游确认表单及其 `_meta` 原样透传，下游自动审批配置独立生效。Codex 开启 `approvals_reviewer = "auto_review"` 时自动审查，否则使用正常的 Accept / Decline / Cancel 确认；审批结果仍由 Codex 策略决定。
 
 当一个工具同时匹配 `disabledTools` 和 `confirmationRequiredTools` 时，`disabledTools` 优先：工具会被隐藏并直接拒绝，不会发起确认。
 

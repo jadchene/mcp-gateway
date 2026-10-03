@@ -1,5 +1,6 @@
 import {
   Client,
+  CLIENT_INFO_META_KEY,
   ProtocolError,
   SdkHttpError,
   type CallToolRequestParams,
@@ -157,6 +158,8 @@ export class SdkMcpClient implements McpClient {
       const params: CallToolRequestParams = {
         name,
         arguments: args,
+        // 将原始客户端身份随调用传递，由下游自行选择元数据格式。
+        ...(context.clientInfo ? { _meta: { [CLIENT_INFO_META_KEY]: structuredClone(context.clientInfo) } } : {}),
         ...(context.inputResponses ? { inputResponses: context.inputResponses } : {}),
         ...(context.requestState ? { requestState: context.requestState } : {})
       };

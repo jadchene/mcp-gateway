@@ -1,4 +1,4 @@
-import { McpServer, acceptedContent, inputRequired } from "@modelcontextprotocol/server";
+import { CLIENT_INFO_META_KEY, McpServer, acceptedContent, inputRequired } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
@@ -58,6 +58,12 @@ server.registerTool(
   "mcp_2025_approval",
   { inputSchema: z.object({ operation: z.string() }) },
   async ({ operation }, context) => {
+    if (operation === "inspect-client-info") {
+      return { content: [], structuredContent: {
+        clientInfo: (context.mcpReq.envelope as Record<string, unknown> | undefined)?.[CLIENT_INFO_META_KEY]
+          ?? context.mcpReq._meta?.[CLIENT_INFO_META_KEY]
+      } };
+    }
     const response = context.mcpReq.inputResponses?.confirm as { action?: string } | undefined;
     if (!response) {
       return inputRequired({
@@ -65,7 +71,14 @@ server.registerTool(
           confirm: inputRequired.elicit({
             message: `Execute ${operation}`,
             requestedSchema: z.object({}),
-            _meta: { trace: "legacy-approval" }
+            _meta: {
+              trace: "legacy-approval",
+              codex_request_type: "approval_request", codex_approval_kind: "mcp_tool_call",
+              codex_strict_auto_review: true, codex_sensitive_action: false,
+              tool_name: "backend_confirmation", tool_description: "Backend review",
+              tool_params: { resolvedOperation: operation }, connector_id: "backend",
+              connector_name: "Backend", persist: "always", custom: { nested: true }
+            }
           })
         },
         requestState: "stdio-approval-v1"

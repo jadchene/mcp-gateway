@@ -26,7 +26,8 @@
         ],
         "inheritEnv": false,
         "envAllowlist": []
-      }
+      },
+      "codexAutoReview": false
     },
     {
       "serviceId": "remote-http",
@@ -39,7 +40,8 @@
         "headers": {
           "Authorization": "Bearer example-token"
         }
-      }
+      },
+      "codexAutoReview": false
     }
   ]
 }

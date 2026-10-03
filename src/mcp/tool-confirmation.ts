@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import type { ElicitResult, InputRequiredResult } from "@modelcontextprotocol/client";
+import type { ElicitRequestFormParams, ElicitResult, InputRequiredResult } from "@modelcontextprotocol/client";
 import type { DownstreamCallContext, DownstreamToolResult } from "./client-types.ts";
 
 const CONFIRMATION_STATE_PREFIX = "mcp-gateway-tool-confirmation-v1.";
@@ -43,7 +43,8 @@ export class ToolConfirmationInterceptor {
     toolName: string,
     args: Record<string, unknown>,
     context: DownstreamCallContext,
-    invoke: (context: DownstreamCallContext) => Promise<DownstreamToolResult>
+    invoke: (context: DownstreamCallContext) => Promise<DownstreamToolResult>,
+    decorateConfirmation?: (params: ElicitRequestFormParams) => ElicitRequestFormParams
   ): Promise<DownstreamToolResult> {
     const requestState = context.requestState;
     if (requestState?.startsWith(APPROVED_STATE_PREFIX)) {
@@ -78,7 +79,7 @@ export class ToolConfirmationInterceptor {
     }
     const state = this.createState(serviceId, toolName, args);
     this.pending.set(state.requestState, state);
-    return buildConfirmationRequest(state);
+    return buildConfirmationRequest(state, decorateConfirmation);
   }
 
   /**
@@ -223,21 +224,21 @@ interface InvocationState {
 /**
  * Creates the modern continuation result; the SDK bridges it for legacy clients.
  */
-function buildConfirmationRequest(state: InvocationState): InputRequiredResult {
+function buildConfirmationRequest(
+  state: InvocationState,
+  decorateConfirmation?: (params: ElicitRequestFormParams) => ElicitRequestFormParams
+): InputRequiredResult {
+  const params: ElicitRequestFormParams = {
+    mode: "form",
+    message: buildConfirmationMessage(state),
+    requestedSchema: { type: "object", properties: {}, additionalProperties: false }
+  };
   return {
     resultType: "input_required",
     inputRequests: {
       [CONFIRMATION_RESPONSE_KEY]: {
         method: "elicitation/create",
-        params: {
-          mode: "form",
-          message: buildConfirmationMessage(state),
-          requestedSchema: {
-            type: "object",
-            properties: {},
-            additionalProperties: false
-          }
-        }
+        params: decorateConfirmation ? decorateConfirmation(params) : params
       }
     },
     requestState: state.requestState

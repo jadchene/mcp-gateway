@@ -329,7 +329,7 @@ test("McpGatewayEngine advertises stable output schemas and leaves forwarded res
   assert.equal(schemaOutput.properties?.schemas?.minProperties, undefined);
 });
 
-test("McpGatewayEngine advertises non-blank identifiers and explicit side effects", () => {
+test("McpGatewayEngine advertises non-blank identifiers and tool purposes", () => {
   const tools = Object.fromEntries(buildGatewayTools().map((tool) => [tool.name, tool]));
   const getService = tools.gateway_get_service as {
     description?: string;
@@ -357,7 +357,7 @@ test("McpGatewayEngine advertises non-blank identifiers and explicit side effect
     description: "reconnect refreshes the connection; enable and disable persist to config.",
     enum: ["reconnect", "enable", "disable"]
   });
-  assert.equal(callTool.description, "Calls one downstream tool and forwards its result. Side effects and confirmation requirements depend on that tool.");
+  assert.equal(callTool.description, "Calls one downstream tool and forwards its result.");
   assert.deepEqual(callTool.inputSchema?.properties?.toolName, {
     type: "string",
     description: "Exact, case-sensitive tool name from gateway_list_tools.",

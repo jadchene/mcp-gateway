@@ -30,22 +30,23 @@ export function buildCodexApprovalMeta(
   };
 }
 
-/** 仅为空的操作确认表单添加 Codex 扩展，保留普通输入表单与下游上下文。 */
+/** 仅为网关自行生成的空确认表单添加 Codex 扩展。 */
 export function withCodexApprovalMeta(
   params: ElicitRequestFormParams,
   clientInfo: unknown,
   toolName: string,
   toolParams: Record<string, unknown>,
   serviceId: string,
-  serviceName?: string
+  serviceName?: string,
+  enabled = false
 ): ElicitRequestFormParams {
   const existing = params._meta ?? {};
-  if (Object.keys(params.requestedSchema.properties).length > 0
+  if (!enabled || Object.keys(params.requestedSchema.properties).length > 0
     || existing.codex_requires_user_input === true
     || (existing.codex_approval_kind !== undefined && existing.codex_approval_kind !== "mcp_tool_call")) {
     return params;
   }
-  // 下游通常将网关识别为普通客户端；统一同步审查，避免漏掉敏感操作标记。
+  // 网关要求显式确认的调用统一同步审查，避免未知工具提前执行。
   const approvalMeta = buildCodexApprovalMeta(clientInfo, toolName, toolParams, params.message, true);
   if (!approvalMeta) return params;
   const meta: Record<string, unknown> = {
@@ -54,11 +55,6 @@ export function withCodexApprovalMeta(
     connector_id: serviceId,
     connector_name: serviceName ?? serviceId
   };
-  if (existing.codex_request_type === "approval_request") {
-    for (const key of ["tool_name", "tool_description", "tool_title", "tool_params"]) {
-      if (existing[key] !== undefined) meta[key] = structuredClone(existing[key]);
-    }
-  }
   delete meta.persist;
   return { ...params, _meta: meta };
 }

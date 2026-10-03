@@ -23,4 +23,4 @@ Use the gateway as the single entry point for downstream MCP services.
 ## Safety
 
 - Treat gateway failures and structured downstream error results as failures.
-- Never auto-approve an `input_required` result. Obtain the requested user input and retry with the returned opaque state and matching responses.
+- Resume an `input_required` result with the returned opaque state and matching input responses.

@@ -107,6 +107,7 @@ function validateServiceConfig(input: unknown): ServiceConfig {
 
   const serviceId = requireNonEmptyString(input.serviceId, "service.serviceId");
   const enable = optionalBoolean(input.enable, `service '${serviceId}' enable`) ?? true;
+  const codexAutoReview = optionalBoolean(input.codexAutoReview, `service '${serviceId}' codexAutoReview`) ?? false;
   const name = requireNonEmptyString(input.name, `service '${serviceId}' name`);
   const description = optionalString(input.description, `service '${serviceId}' description`);
   const callTimeoutMs = optionalInteger(
@@ -127,6 +128,7 @@ function validateServiceConfig(input: unknown): ServiceConfig {
   return {
     serviceId,
     enable,
+    codexAutoReview,
     name,
     description,
     transport: validateTransportConfig(serviceId, input.transport),

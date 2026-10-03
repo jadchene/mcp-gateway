@@ -115,6 +115,8 @@ export interface ServiceConfig {
    * upstream form elicitation confirmation before the gateway invokes them.
    */
   confirmationRequiredTools?: string[];
+  /** 显式启用本服务的网关自定义确认的 Codex 自动审批扩展，默认禁用。 */
+  codexAutoReview?: boolean;
   /**
    * Lists case-sensitive downstream tool-name glob patterns that the gateway
    * hides from discovery and refuses to invoke.

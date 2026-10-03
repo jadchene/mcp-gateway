@@ -19,11 +19,25 @@ test("validateGatewayConfig accepts a minimal valid stdio config", () => {
 
   assert.equal(config.services[0]?.serviceId, "demo");
   assert.equal(config.services[0]?.enable, true);
+  assert.equal(config.services[0]?.codexAutoReview, false);
   assert.deepEqual(config.logging, {
     enable: false,
     path: null,
     maxBytes: 10 * 1024 * 1024
   });
+});
+
+test("Codex auto review is configured independently per service and rejects non-booleans", () => {
+  const service = { name: "Demo", transport: { type: "stdio", command: "node" } };
+  const config = validateGatewayConfig({ services: [
+    { ...service, serviceId: "enabled", codexAutoReview: true },
+    { ...service, serviceId: "disabled", codexAutoReview: false },
+    { ...service, serviceId: "default" }
+  ] });
+  assert.deepEqual(config.services.map(item => item.codexAutoReview), [true, false, false]);
+  for (const codexAutoReview of ["true", 1, null]) {
+    assert.throws(() => validateGatewayConfig({ services: [{ ...service, serviceId: "invalid", codexAutoReview }] }), /codexAutoReview.*boolean/);
+  }
 });
 
 test("validateGatewayConfig accepts unique confirmation-required tool names", () => {

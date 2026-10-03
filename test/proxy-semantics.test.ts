@@ -177,7 +177,7 @@ for (const clientName of ["proxy-test", "codex-mcp-client"]) {
         }
       } as unknown as CallToolRequestParams, { allowInputRequired: true }) as CallToolResult;
       assert.deepEqual(second.structuredContent, [1, true, null, { nested: "value" }]);
-    }, () => undefined, "2026-07-28", ["arbitrary_*"], [], clientName);
+    }, () => undefined, "2026-07-28", ["arbitrary_*"], [], clientName, true);
   });
 }
 
@@ -202,7 +202,7 @@ for (const clientName of ["proxy-test", "codex-mcp-client"]) {
           assert.equal(result.isError, action !== "accept");
           assert.deepEqual(result.structuredContent, { operation: "deploy-test", executed: action === "accept" });
         }
-      }, () => undefined, downstreamVersion, [], [], clientName);
+      }, () => undefined, downstreamVersion, [], [], clientName, true);
     });
   }
 }
@@ -229,31 +229,111 @@ for (const clientName of ["proxy-test", "codex-mcp-client"]) {
             assert.deepEqual(result.structuredContent, { operation: "deploy-test", executed: action === "accept" });
           }
           assert.equal(requests, 3);
-        }, upstreamVersion, downstreamVersion, false, [], clientName);
+        }, upstreamVersion, downstreamVersion, false, [], clientName, true);
       });
     }
   }
 }
 
+for (const codexAutoReview of [undefined, false, true]) {
+  for (const targetAutoReview of [false, true]) {
+    test(`gateway service auto review ${codexAutoReview} leaves downstream auto review ${targetAutoReview} unchanged`, async () => {
+      await withProxy(async ({ client }) => {
+        const result = await client.callTool({
+          name: "gateway_call_tool",
+          arguments: {
+            serviceId: "downstream", toolName: "needs_approval",
+            arguments: { operation: "test-config-gates", targetAutoReview }
+          }
+        }, { allowInputRequired: true }) as unknown as InputRequiredResult;
+        assert.equal(isInputRequiredResult(result), true);
+        const request = Object.values(result.inputRequests ?? {})[0]!;
+        const meta = (request.params as ElicitRequestFormParams)._meta;
+        assert.deepEqual(meta, { trace: "modern-approval", ...(targetAutoReview ? downstreamApprovalMeta("test-config-gates") : {}) });
+      }, () => undefined, "2026-07-28", [], [], "codex-mcp-client", codexAutoReview);
+    });
+  }
+}
+
+for (const codexAutoReview of [undefined, false]) {
+  test(`gateway configured tool confirmation stays standard when auto review is ${codexAutoReview}`, async () => {
+    await withProxy(async ({ client }) => {
+      const result = await client.callTool({
+        name: "gateway_call_tool",
+        arguments: { serviceId: "downstream", toolName: "arbitrary_json", arguments: {} }
+      }, { allowInputRequired: true }) as unknown as InputRequiredResult;
+      const params = result.inputRequests?.confirm?.params as ElicitRequestFormParams;
+      assert.deepEqual(params.requestedSchema.properties, {});
+      assert.equal(params._meta?.codex_request_type, undefined);
+    }, () => undefined, "2026-07-28", ["arbitrary_*"], [], "codex-mcp-client", codexAutoReview);
+  });
+}
+
+for (const downstreamVersion of ["2026-07-28", "2025-11-25", "2025-06-18"] as const) {
+  for (const upstreamVersion of ["2026-07-28", "2025-11-25", "2025-06-18"] as const) {
+    test(`${upstreamVersion} gateway forwards original client identity to ${downstreamVersion}`, async () => {
+      const run = async ({ client }: { client: Client }): Promise<void> => {
+        const result = await client.callTool({ name: "gateway_call_tool", arguments: {
+          serviceId: "downstream",
+          toolName: downstreamVersion === "2026-07-28" ? "needs_approval" : "mcp_2025_approval",
+          arguments: { operation: "inspect-client-info" }
+        } }) as CallToolResult;
+        assert.deepEqual(result.structuredContent, { clientInfo: { name: "codex-mcp-client", version: "1.0.0" } });
+      };
+      if (upstreamVersion === "2026-07-28") {
+        await withProxy(run, () => undefined, downstreamVersion, [], [], "codex-mcp-client", false);
+      } else {
+        await withLegacyInMemoryProxy(run, upstreamVersion, downstreamVersion, false, [], "codex-mcp-client", false);
+      }
+    });
+  }
+}
+
 /** 核对实际经过 SDK 和传输层的审批请求，而非仅检查构造函数。 */
 function assertApprovalRequest(
-  value: unknown, clientName: string, toolName: string, toolParams: Record<string, unknown>
+  value: unknown, _clientName: string, _toolName: string, toolParams: Record<string, unknown>
 ): void {
   const params = value as ElicitRequestFormParams;
   assert.equal(params.mode, "form");
   assert.deepEqual(params.requestedSchema.properties, {});
   assert.ok(params._meta?.trace);
-  if (clientName === "codex-mcp-client") {
-    assert.equal(params._meta?.codex_request_type, "approval_request");
-    assert.equal(params._meta?.codex_approval_kind, "mcp_tool_call");
-    assert.equal(params._meta?.codex_strict_auto_review, true);
-    assert.equal(params._meta?.codex_sensitive_action, true);
-    assert.equal(params._meta?.tool_name, toolName);
-    assert.deepEqual(params._meta?.tool_params, toolParams);
-    assert.equal(params._meta?.persist, undefined);
-  } else {
-    assert.equal(params._meta?.codex_request_type, undefined);
-  }
+  const { progressToken: _sdkProgressToken, ...meta } = params._meta ?? {};
+  assert.deepEqual(meta, { trace: params._meta?.trace, ...downstreamApprovalMeta(toolParams.operation as string) });
+}
+
+/** 下游自行定义审批上下文，网关不得重写或剥离任何字段。 */
+function downstreamApprovalMeta(operation: string): Record<string, unknown> {
+  return {
+    codex_request_type: "approval_request", codex_approval_kind: "mcp_tool_call",
+    codex_strict_auto_review: true, codex_sensitive_action: false,
+    tool_name: "backend_confirmation", tool_description: "Backend review",
+    tool_params: { resolvedOperation: operation }, connector_id: "backend",
+    connector_name: "Backend", persist: "always", custom: { nested: true }
+  };
+}
+
+for (const downstreamVersion of ["2026-07-28", "2025-11-25", "2025-06-18"] as const) {
+  test(`gateway own confirmation does not decorate subsequent ${downstreamVersion} confirmation`, async () => {
+    const toolName = downstreamVersion === "2026-07-28" ? "needs_approval" : "mcp_2025_approval";
+    await withProxy(async ({ client }) => {
+      const call = { name: "gateway_call_tool", arguments: {
+        serviceId: "downstream", toolName, arguments: { operation: "nested-review" }
+      } };
+      const first = await client.callTool(call, { allowInputRequired: true }) as unknown as InputRequiredResult;
+      const own = first.inputRequests?.confirm?.params as ElicitRequestFormParams;
+      assert.equal(own._meta?.tool_name, toolName);
+      assert.equal(own._meta?.codex_sensitive_action, true);
+      const second = await client.callTool({
+        ...call, requestState: first.requestState, inputResponses: { confirm: { action: "accept", content: {} } }
+      } as unknown as CallToolRequestParams, { allowInputRequired: true }) as unknown as InputRequiredResult;
+      const [key, request] = Object.entries(second.inputRequests ?? {})[0]!;
+      assertApprovalRequest(request.params, "codex-mcp-client", toolName, { operation: "nested-review" });
+      const result = await client.callTool({
+        ...call, requestState: second.requestState, inputResponses: { [key]: { action: "accept", content: {} } }
+      } as unknown as CallToolRequestParams, { allowInputRequired: true }) as CallToolResult;
+      assert.deepEqual(result.structuredContent, { operation: "nested-review", executed: true });
+    }, () => undefined, downstreamVersion, [toolName], [], "codex-mcp-client", true);
+  });
 }
 
 test("gateway hides schemas and rejects calls for configured disabled tools", async () => {
@@ -569,7 +649,8 @@ async function withProxy(
   downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28",
   confirmationRequiredTools: string[] = [],
   disabledTools: string[] = [],
-  clientName = "proxy-test"
+  clientName = "proxy-test",
+  codexAutoReview?: boolean
 ): Promise<void> {
   const downstream = downstreamProtocolVersion === "2026-07-28"
     ? await startDownstream(onDownstreamCancelled)
@@ -583,6 +664,7 @@ async function withProxy(
         name: "Downstream",
         confirmationRequiredTools,
         disabledTools,
+        ...(codexAutoReview === undefined ? {} : { codexAutoReview }),
         transport: downstream
           ? {
               type: "http",
@@ -629,7 +711,8 @@ async function withLegacyInMemoryProxy(
   downstreamProtocolVersion: "2026-07-28" | "2025-11-25" | "2025-06-18" = "2026-07-28",
   useLegacyElicitationShorthand = false,
   confirmationRequiredTools: string[] = [],
-  clientName = `${protocolVersion}-proxy-test`
+  clientName = `${protocolVersion}-proxy-test`,
+  codexAutoReview?: boolean
 ): Promise<void> {
   const downstream = downstreamProtocolVersion === "2026-07-28"
     ? await startDownstream(() => undefined)
@@ -642,6 +725,7 @@ async function withLegacyInMemoryProxy(
         serviceId: "downstream",
         name: "Downstream",
         confirmationRequiredTools,
+        ...(codexAutoReview === undefined ? {} : { codexAutoReview }),
         transport: downstream
           ? {
               type: "http",
@@ -739,8 +823,14 @@ async function startDownstream(
     }));
     server.registerTool(
       "needs_approval",
-      { inputSchema: z.object({ operation: z.string() }) },
-      async ({ operation }, context) => {
+      { inputSchema: z.object({ operation: z.string(), targetAutoReview: z.boolean().optional() }) },
+      async ({ operation, targetAutoReview }, context) => {
+        if (operation === "inspect-client-info") {
+          return { content: [], structuredContent: {
+            clientInfo: (context.mcpReq.envelope as Record<string, unknown> | undefined)?.[CLIENT_INFO_META_KEY]
+              ?? context.mcpReq._meta?.[CLIENT_INFO_META_KEY]
+          } };
+        }
         const response = context.mcpReq.inputResponses?.confirm as { action?: string } | undefined;
         if (!response) {
           return inputRequired({
@@ -748,7 +838,10 @@ async function startDownstream(
               confirm: inputRequired.elicit({
                 message: `Execute ${operation}`,
                 requestedSchema: z.object({}),
-                _meta: { trace: "modern-approval" }
+                _meta: {
+                  trace: "modern-approval",
+                  ...(targetAutoReview !== false ? downstreamApprovalMeta(operation) : {})
+                }
               })
             },
             requestState: "modern-approval-v1"

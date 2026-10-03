@@ -22,7 +22,7 @@ test("Codex approval metadata selects only Codex client names and snapshots actu
   }
 });
 
-test("gateway preserves exact downstream approval context and removes persist for strict review", () => {
+test("gateway decorates its own confirmation with actual arguments and removes persist", () => {
   const params: ElicitRequestFormParams = {
     mode: "form", message: "Review database script", requestedSchema: { type: "object", properties: {} },
     _meta: {
@@ -32,27 +32,41 @@ test("gateway preserves exact downstream approval context and removes persist fo
       persist: "always", trace: "approval-trace"
     }
   };
-  const result = withCodexApprovalMeta(params, { name: "codex" }, "execute_script", { databaseKey: "test" }, "database");
+  const result = withCodexApprovalMeta(params, { name: "codex" }, "execute_script", { databaseKey: "test" }, "database", undefined, true);
   assert.equal(result._meta?.codex_strict_auto_review, true);
   assert.equal(result._meta?.persist, undefined);
   assert.equal(result._meta?.trace, "approval-trace");
   assert.equal(result._meta?.codex_sensitive_action, true);
-  assert.deepEqual(result._meta?.tool_params, params._meta?.tool_params);
+  assert.deepEqual(result._meta?.tool_params, { databaseKey: "test" });
   assert.equal(params._meta?.persist, "always");
 });
 
-test("gateway requires synchronous approval even when downstream omits or disables the sensitive flag", () => {
+test("gateway requires synchronous approval for its own confirmations", () => {
   for (const meta of [undefined, { codex_request_type: "approval_request", codex_sensitive_action: false }]) {
     const params: ElicitRequestFormParams = {
       mode: "form", message: "Review SQL", requestedSchema: { type: "object", properties: {} },
       ...(meta ? { _meta: meta } : {})
     };
     const args = { databaseKey: "test", sql: "DROP TABLE approval_test" };
-    const result = withCodexApprovalMeta(params, { name: "codex-mcp-client" }, "execute_statement", args, "database");
+    const result = withCodexApprovalMeta(params, { name: "codex-mcp-client" }, "execute_statement", args, "database", undefined, true);
     assert.equal(result._meta?.codex_sensitive_action, true);
     assert.deepEqual(result._meta?.tool_params, args);
     assert.equal(params._meta?.codex_sensitive_action, meta?.codex_sensitive_action);
   }
+});
+
+test("gateway defaults to disabled and leaves existing metadata unchanged when disabled", () => {
+  for (const enabled of [undefined, false]) {
+    const params: ElicitRequestFormParams = {
+      mode: "form", message: "Review SQL", requestedSchema: { type: "object", properties: {} },
+      _meta: { codex_request_type: "approval_request", trace: "original", persist: "always" }
+    };
+    assert.equal(withCodexApprovalMeta(params, { name: "codex" }, "execute_statement", {}, "database", undefined, enabled), params);
+  }
+  const plain: ElicitRequestFormParams = {
+    mode: "form", message: "Review", requestedSchema: { type: "object", properties: {} }
+  };
+  assert.equal(withCodexApprovalMeta(plain, { name: "codex" }, "deploy", {}, "demo"), plain);
 });
 
 test("gateway leaves ordinary inputs and explicit user-input requests unchanged", () => {
@@ -64,7 +78,7 @@ test("gateway leaves ordinary inputs and explicit user-input requests unchanged"
     { ...base, _meta: { codex_requires_user_input: true } },
     { ...base, _meta: { codex_approval_kind: "browser_auth" } }
   ]) {
-    assert.equal(withCodexApprovalMeta(params, { name: "codex" }, "deploy", {}, "demo"), params);
+    assert.equal(withCodexApprovalMeta(params, { name: "codex" }, "deploy", {}, "demo", undefined, true), params);
   }
-  assert.equal(withCodexApprovalMeta(base, { name: "claude" }, "deploy", {}, "demo"), base);
+  assert.equal(withCodexApprovalMeta(base, { name: "claude" }, "deploy", {}, "demo", undefined, true), base);
 });
