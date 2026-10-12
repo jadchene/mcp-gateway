@@ -125,8 +125,7 @@ export class SdkMcpClient implements McpClient {
    * Refreshes server identity and the complete tool catalog.
    */
   public async getMetadata(): Promise<ServiceMetadata> {
-    return this.executeWithRecovery(async () => {
-      const client = await this.requireClient();
+    return this.executeWithRecovery(async (client) => {
       const tools = await this.requestToolsList(client);
       return {
         protocolVersion: client.getNegotiatedProtocolVersion() ?? null,
@@ -142,7 +141,7 @@ export class SdkMcpClient implements McpClient {
    * Lists the downstream tools using SDK caching and pagination behavior.
    */
   public async listTools(): Promise<ToolDefinition[]> {
-    return this.executeWithRecovery(async () => this.requestToolsList(await this.requireClient()));
+    return this.executeWithRecovery((client) => this.requestToolsList(client));
   }
 
   /**
@@ -153,8 +152,10 @@ export class SdkMcpClient implements McpClient {
     args: Record<string, unknown>,
     context: DownstreamCallContext = {}
   ): Promise<CallToolResult | InputRequiredResult> {
+    let client: Client | null = null;
     try {
-      const client = await this.requireClient();
+      client = await this.requireClient();
+      const callClient = client;
       const params: CallToolRequestParams = {
         name,
         arguments: args,
@@ -165,7 +166,7 @@ export class SdkMcpClient implements McpClient {
       };
       const invoke = async (signal: AbortSignal): Promise<CallToolResult | InputRequiredResult> => {
         const callSignal = combineWithTimeout(signal, this.service.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS);
-        const result = await client.callTool(params, {
+        const result = await callClient.callTool(params, {
           signal: callSignal,
           allowInputRequired: true,
           toolDefinition: this.tools.get(name)
@@ -173,21 +174,33 @@ export class SdkMcpClient implements McpClient {
         return result as CallToolResult | InputRequiredResult;
       };
       if (client.getProtocolEra() === "legacy") {
-        return this.formElicitationBridge.execute(name, args, context, invoke);
+        return await this.formElicitationBridge.execute(name, args, context, invoke);
       }
       const result = await invoke(context.signal ?? new AbortController().signal);
       return result as CallToolResult | InputRequiredResult;
     } catch (error) {
       const normalized = normalizeError(error);
+      if (this.isSessionExpired(normalized, client)) {
+        await this.disposeConnection(client);
+        throw new Error(
+          `Downstream session expired while calling '${name}'; the gateway did not replay it. The next call will reconnect. ${normalized.message}`,
+          { cause: normalized }
+        );
+      }
       if (isNonRetryable(normalized) || context.signal?.aborted) {
         throw normalized;
       }
-      await this.disposeConnection();
+      await this.disposeConnection(client);
       throw new Error(
         `Downstream tool '${name}' failed; execution status is unknown and the gateway did not replay it. ${normalized.message}`,
         { cause: normalized }
       );
     }
+  }
+
+  /** 判断传输层是否明确报告当前会话已失效，默认传输不作此判断。 */
+  protected isSessionExpired(_error: Error, _client: Client | null): boolean {
+    return false;
   }
 
   /**
@@ -230,6 +243,7 @@ export class SdkMcpClient implements McpClient {
         message: error.message
       });
     };
+    client.onclose = () => this.clearConnection(client);
 
     const transport = transportFactory();
     try {
@@ -273,21 +287,23 @@ export class SdkMcpClient implements McpClient {
   }
 
   /**
-   * Retries transport failures while leaving protocol and HTTP client errors untouched.
+   * 重试只读元数据请求的传输或会话错误，保留其他协议及 HTTP 错误。
    */
-  private async executeWithRecovery<T>(operation: () => Promise<T>): Promise<T> {
+  private async executeWithRecovery<T>(operation: (client: Client) => Promise<T>): Promise<T> {
     while (true) {
       if (this.unavailableReason) {
         throw new Error(this.unavailableReason);
       }
+      let client: Client | null = null;
       try {
-        return await operation();
+        client = await this.requireClient();
+        return await operation(client);
       } catch (error) {
         const normalized = normalizeError(error);
-        if (isNonRetryable(normalized)) {
+        if (isNonRetryable(normalized) && !this.isSessionExpired(normalized, client)) {
           throw normalized;
         }
-        await this.disposeConnection();
+        await this.disposeConnection(client);
         if (this.restartAttempts >= MAX_RESTART_ATTEMPTS) {
           this.unavailableReason = `Service '${this.key}' is unavailable after ${MAX_RESTART_ATTEMPTS} restart attempts. Last error: ${normalized.message}`;
           throw new Error(this.unavailableReason);
@@ -303,14 +319,27 @@ export class SdkMcpClient implements McpClient {
   }
 
   /**
-   * Closes the active SDK connection and clears derived tool views.
+   * 关闭失败请求所属的连接，避免旧请求误关闭已经建立的新连接。
    */
-  private async disposeConnection(): Promise<void> {
-    this.formElicitationBridge.reset(new Error(`Downstream service '${this.key}' connection was closed.`));
+  private async disposeConnection(expectedClient?: Client | null): Promise<void> {
     const client = this.client;
+    if (expectedClient !== undefined && client !== expectedClient) {
+      return;
+    }
+    if (client) {
+      this.clearConnection(client);
+      await client.close().catch(() => undefined);
+    }
+  }
+
+  /** 清理当前连接的派生状态；已替换连接的关闭事件不影响新连接。 */
+  private clearConnection(client: Client): void {
+    if (this.client !== client) {
+      return;
+    }
+    this.formElicitationBridge.reset(new Error(`Downstream service '${this.key}' connection was closed.`));
     this.client = null;
     this.tools.clear();
-    await client?.close().catch(() => undefined);
   }
 }
 

@@ -1,4 +1,6 @@
 import {
+  Client,
+  SdkHttpError,
   StreamableHTTPClientTransport,
   type FetchLike
 } from "@modelcontextprotocol/client";
@@ -28,6 +30,35 @@ export class StreamableHttpClient extends SdkMcpClient {
         }
       })
     );
+  }
+
+  /** 仅对已建立的旧版 HTTP 会话识别失效响应，不将认证或参数错误视为重连信号。 */
+  protected override isSessionExpired(error: Error, client: Client | null): boolean {
+    const transport = client?.transport;
+    if (!(error instanceof SdkHttpError)
+      || !(transport instanceof StreamableHTTPClientTransport)
+      || !transport.sessionId
+      || client?.getProtocolEra() !== "legacy") {
+      return false;
+    }
+    if (error.status === 404) {
+      return true;
+    }
+    if (error.status !== 400 || typeof error.data.text !== "string") {
+      return false;
+    }
+    try {
+      const response = JSON.parse(error.data.text);
+      // 微信开发者工具在旧会话不存在时返回通用 Bad Request，且响应不关联请求 ID。
+      return response?.error === "Invalid or missing session ID"
+        || (response?.jsonrpc === "2.0"
+          && response?.id === null
+          && response?.error?.code === -32000
+          && response?.error?.message === "Bad Request")
+        || response?.error?.message === "Session not found";
+    } catch {
+      return false;
+    }
   }
 }
 
