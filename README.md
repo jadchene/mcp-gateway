@@ -4,64 +4,39 @@ English | [简体中文](./README_zh.md)
 
 ## Introduction
 
-MCP Gateway puts multiple MCP services behind one endpoint. An agent connects to the gateway and sees six routing tools; downstream services, tools, and schemas are looked up only when they are needed.
+MCP Gateway puts multiple MCP services behind one endpoint. An agent connects to the gateway and sees up to six routing tools; downstream services, tools, and schemas are looked up only when they are needed.
 
-The project uses the official TypeScript SDK v2 and requires Node.js 24 or later.
-
-> [!IMPORTANT]
-> MCP Gateway v0.6.2 and later accept only MCP `2026-07-28`, `2025-11-25`, and `2025-06-18`. Supported transports are newline-delimited stdio and single-endpoint Streamable HTTP. Standalone HTTP+SSE (`/sse`), `Content-Length` framing, and other protocol revisions are not supported.
-
-## Why Use It
-
-- Keep the agent context small even when many MCP services are configured.
-- Connect the agent once, then add or remove downstream services in the gateway config.
-- Find tools by name or description and load schemas only when required.
-- Use stdio and Streamable HTTP services through the same interface.
-- Require user confirmation for selected tool-name patterns, or hide and block matching tools entirely.
-- Reload config changes without restarting the gateway.
+Supports stdio and Streamable HTTP with MCP `2026-07-28`, `2025-11-25`, and `2025-06-18`. Legacy `/sse` endpoints are unsupported.
 
 ## Quick Start
 
 ### Install
 
+Requires Node.js 24 or later.
+
 ```bash
 npm install -g @jadchene/mcp-gateway-service
 ```
 
-Create `config.json`. Replace `your-mcp-service` with the command of an installed MCP server:
-
-```json
-{
-  "services": [
-    {
-      "serviceId": "tools",
-      "name": "Tools",
-      "transport": {
-        "type": "stdio",
-        "command": "your-mcp-service"
-      }
-    }
-  ]
-}
-```
+Create `config.json` using the [configuration example](#config-file). Replace the downstream command, arguments, and paths with those of an installed MCP server.
 
 ### Stdio
 
 The agent starts the gateway process, so no separate startup command is needed.
 
-Codex `config.toml`:
+Codex:
 
-```toml
-[mcp_servers.gateway]
-command = "mcp-gateway-service"
-args = ["--config", "./config.json"]
+```bash
+codex mcp add gateway -- mcp-gateway-service --config /absolute/path/config.json
 ```
 
 Claude Code:
 
 ```bash
-claude mcp add gateway -- mcp-gateway-service --config ./config.json
+claude mcp add gateway -- mcp-gateway-service --config /absolute/path/config.json
 ```
+
+Replace `/absolute/path/config.json` with the file you created. On Windows, a path such as `C:/mcp/gateway/config.json` works. Absolute paths avoid depending on the client's working directory.
 
 ### Streamable HTTP
 
@@ -74,11 +49,10 @@ mcp-gateway-service --http --config ./config.json
 The default endpoint is `http://127.0.0.1:3000/mcp`.
 HTTP hides `gateway_manage_service` by default. Non-loopback binds require a bearer token in `MCP_GATEWAY_AUTH_TOKEN`.
 
-Codex `config.toml`:
+Codex:
 
-```toml
-[mcp_servers.gateway]
-url = "http://127.0.0.1:3000/mcp"
+```bash
+codex mcp add gateway --url http://127.0.0.1:3000/mcp
 ```
 
 Claude Code:
@@ -113,58 +87,62 @@ Stdio remains available when `--http` is enabled.
 {
   "logging": {
     "enable": false,
-    "path": "./logs/mcp-gateway.log"
+    "path": "./logs/mcp-gateway.log",
+    "maxBytes": 10485760
   },
   "services": [
     {
       "serviceId": "local-tools",
+      "enable": true,
       "name": "Local Tools",
+      "description": "Local MCP service",
+      "callTimeoutMs": 120000,
       "confirmationRequiredTools": ["delete_*", "deploy_?"],
       "codexAutoReview": false,
       "disabledTools": ["internal_*", "legacy_tool"],
       "transport": {
         "type": "stdio",
         "command": "your-mcp-service",
-        "args": []
+        "args": ["--config", "/absolute/path/service/config.json"],
+        "cwd": "/absolute/path/service",
+        "env": {},
+        "inheritEnv": false,
+        "envAllowlist": []
       }
     },
     {
       "serviceId": "remote-tools",
+      "enable": false,
       "name": "Remote Tools",
+      "description": "Remote MCP service",
+      "callTimeoutMs": 120000,
+      "confirmationRequiredTools": [],
+      "codexAutoReview": false,
+      "disabledTools": [],
       "transport": {
         "type": "http",
-        "url": "http://127.0.0.1:3200/mcp"
+        "url": "http://127.0.0.1:3200/mcp",
+        "headers": {
+          "Authorization": "Bearer replace-with-token"
+        }
       }
     }
   ]
 }
 ```
 
-| Field | Description |
-| --- | --- |
-| `services` | List of downstream MCP services. |
-| `serviceId` | Required unique identifier used by gateway tools. |
-| `name` | Required display name. |
-| `description` | Optional service description. |
-| `enable` | Optional; defaults to `true`. |
-| `callTimeoutMs` | Optional downstream tool-call timeout; defaults to 120 seconds. |
-| `confirmationRequiredTools` | Optional unique array of case-sensitive full-name glob patterns. `*` matches zero or more characters and `?` matches one character. The gateway asks the upstream user for form elicitation confirmation before calling a matching tool. |
-| `codexAutoReview` | Optional boolean, defaults to `false`. Set `true` to enable Codex automatic-review metadata for gateway confirmations configured by this service’s `confirmationRequiredTools`. |
-| `disabledTools` | Optional unique array using the same glob syntax. Matching tools are hidden from tool listing and schema lookup, and calls are rejected before reaching the downstream service. |
-| `transport.type` | `stdio` or `http`. |
-| `transport.command` | Required command for a stdio service. |
-| `transport.args` | Optional command arguments for a stdio service. |
-| `transport.cwd` | Optional working directory for a stdio service. |
-| `transport.env` | Optional environment variables for a stdio service. |
-| `transport.inheritEnv` | Opts into inheriting the complete gateway environment; defaults to `false`. |
-| `transport.envAllowlist` | Additional process environment names passed to stdio services. |
-| `transport.url` | Required Streamable HTTP URL for an HTTP service. |
-| `transport.headers` | Optional static headers for an HTTP service. |
-| `logging.enable` | Enables file logging; defaults to `false`. |
-| `logging.path` | Log file path. Relative paths use the config file directory. |
-| `logging.maxBytes` | Active log size before rotation; defaults to 10 MiB. |
+Configure and enable the services you use. Remove `Authorization` for an HTTP service without token authentication.
 
-The config file is watched for changes. Invalid updates are rejected and the last valid config stays active. See [config.example.json](./config.example.json) for another example.
+| Setting | Usage |
+| --- | --- |
+| `serviceId` | Unique identifier for each service. |
+| `confirmationRequiredTools` | Case-sensitive full tool-name patterns: `*` matches any number of characters, `?` matches one. Matching calls require confirmation. |
+| `disabledTools` | Uses the same patterns to hide and block tools; takes precedence over confirmation rules. |
+| `transport.cwd`, `transport.args` | Prefer absolute paths. Relative working directories resolve from the gateway process directory. |
+| `transport.env`, `transport.envAllowlist` | Supply variable values or allow named variables through. Custom variables are not inherited unless allowed; `inheritEnv: true` inherits the full environment. Config strings do not expand `${VAR}`. |
+| `logging.path`, `logging.maxBytes` | Log paths resolve from the config directory; logs rotate at the configured size. |
+
+Configuration reloads automatically; invalid updates keep the last valid configuration. The complete example is also available in [config.example.json](config.example.json).
 
 ### Gateway Tools
 
@@ -179,11 +157,9 @@ The config file is watched for changes. Invalid updates are rejected and the las
 
 The usual flow is `gateway_list_services` → `gateway_list_tools` → `gateway_get_tool_schema` when needed → `gateway_call_tool`. Pass `{}` to `gateway_call_tool` when the downstream tool has no arguments.
 
-Calls matching `confirmationRequiredTools` show the service, tool, and arguments and require approval in the current MCP session. Clients without form elicitation support cannot invoke them. Calls with uncertain outcomes are not retried automatically.
+Confirmations show the service, tool, and arguments and require a client with interactive confirmation support. Calls with uncertain outcomes are not retried automatically.
 
-Codex automatic-review integration is disabled by default. Set `"codexAutoReview": true` in the selected `services[]` block to enable approval metadata only for gateway confirmations generated by `confirmationRequiredTools`. Downstream confirmation forms and their `_meta` are forwarded unchanged; downstream automatic-review settings operate independently. Codex uses automatic review when `approvals_reviewer = "auto_review"` is enabled; otherwise, use normal Accept / Decline / Cancel confirmation. Approval remains subject to Codex policy.
-
-`disabledTools` takes precedence over `confirmationRequiredTools` when both match. A disabled tool is hidden and rejected immediately without asking for confirmation.
+For Codex automatic review, set `"codexAutoReview": true` in the selected `services[]` block and start Codex with `codex -c approvals_reviewer=auto_review`. This applies to gateway confirmations; configure downstream services' own approvals separately. Otherwise, use Accept / Decline / Cancel. Codex policy determines whether an operation is approved.
 
 Agents with Skills support can use the included [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) for the discovery and calling workflow.
 
@@ -194,15 +170,15 @@ git clone https://github.com/jadchene/mcp-gateway.git
 cd mcp-gateway
 npm install
 npm run verify
+```
+
+Create `config.json` as shown above, then start the development service:
+
+```bash
 npm run dev -- --config ./config.json
 ```
 
-Build and run the compiled service:
-
-```bash
-npm run build
-npm start -- --config ./config.json
-```
+`npm run verify` builds the service. Run the compiled output with `npm start -- --config ./config.json`.
 
 ## License
 

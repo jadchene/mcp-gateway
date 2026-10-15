@@ -6,42 +6,40 @@
   },
   "services": [
     {
-      "serviceId": "demo-echo",
-      "enable": false,
-      "name": "Demo Echo Service",
-      "description": "Sample echo MCP service.",
+      "serviceId": "local-tools",
+      "enable": true,
+      "name": "Local Tools",
+      "description": "Local MCP service",
       "callTimeoutMs": 120000,
-      "confirmationRequiredTools": [
-        "echo*"
-      ],
-      "disabledTools": [
-        "echo_debug*"
-      ],
+      "confirmationRequiredTools": ["delete_*", "deploy_?"],
+      "codexAutoReview": false,
+      "disabledTools": ["internal_*", "legacy_tool"],
       "transport": {
         "type": "stdio",
-        "command": "node",
-        "args": [
-          "--experimental-strip-types",
-          "examples/echo-service.ts"
-        ],
+        "command": "your-mcp-service",
+        "args": ["--config", "/absolute/path/service/config.json"],
+        "cwd": "/absolute/path/service",
+        "env": {},
         "inheritEnv": false,
         "envAllowlist": []
-      },
-      "codexAutoReview": false
+      }
     },
     {
-      "serviceId": "remote-http",
+      "serviceId": "remote-tools",
       "enable": false,
-      "name": "Remote Streamable HTTP Service",
-      "description": "Example downstream MCP service over Streamable HTTP.",
+      "name": "Remote Tools",
+      "description": "Remote MCP service",
+      "callTimeoutMs": 120000,
+      "confirmationRequiredTools": [],
+      "codexAutoReview": false,
+      "disabledTools": [],
       "transport": {
         "type": "http",
         "url": "http://127.0.0.1:3200/mcp",
         "headers": {
-          "Authorization": "Bearer example-token"
+          "Authorization": "Bearer replace-with-token"
         }
-      },
-      "codexAutoReview": false
+      }
     }
   ]
 }

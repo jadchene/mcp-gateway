@@ -4,64 +4,39 @@
 
 ## 简介
 
-MCP Gateway 把多个 MCP 服务收拢到一个入口。Agent 连接网关后只会看到 6 个路由工具，具体的下游服务、工具和 schema 在需要时再查询。
+MCP Gateway 把多个 MCP 服务收拢到一个入口。Agent 连接网关后最多只会看到 6 个路由工具，具体的下游服务、工具和 schema 在需要时再查询。
 
-项目使用官方 TypeScript SDK v2，需要 Node.js 24 或更高版本。
-
-> [!IMPORTANT]
-> MCP Gateway v0.6.2 及后续版本仅接受 MCP `2026-07-28`、`2025-11-25` 和 `2025-06-18`。传输方式仅支持换行分隔 stdio 和单端点 Streamable HTTP。不支持独立 HTTP+SSE（`/sse`）、`Content-Length` framing 和其他协议版本。
-
-## 为什么使用
-
-- 即使配置了很多 MCP 服务，也不会一次性占用大量 Agent 上下文。
-- Agent 只需接入一次，后续增减下游服务只改网关配置。
-- 可以按名称或描述查找工具，需要时再读取 schema。
-- Stdio 和 Streamable HTTP 服务使用同一套调用方式。
-- 可按工具名模式要求用户确认，或隐藏并禁止调用指定工具。
-- 修改配置文件后自动重载，不必重启网关。
+支持 stdio 和 Streamable HTTP，兼容 MCP `2026-07-28`、`2025-11-25` 和 `2025-06-18`；不支持旧式 `/sse` 入口。
 
 ## 快速开始
 
 ### 安装
 
+需要 Node.js 24 或更高版本。
+
 ```bash
 npm install -g @jadchene/mcp-gateway-service
 ```
 
-创建 `config.json`，将 `your-mcp-service` 替换为已经安装的 MCP 服务命令：
-
-```json
-{
-  "services": [
-    {
-      "serviceId": "tools",
-      "name": "Tools",
-      "transport": {
-        "type": "stdio",
-        "command": "your-mcp-service"
-      }
-    }
-  ]
-}
-```
+按照[配置文件示例](#配置文件)创建 `config.json`，将下游命令、参数和路径替换为已经安装的 MCP 服务配置。
 
 ### Stdio
 
 网关进程由 Agent 启动，不需要单独运行启动命令。
 
-Codex `config.toml`：
+Codex：
 
-```toml
-[mcp_servers.gateway]
-command = "mcp-gateway-service"
-args = ["--config", "./config.json"]
+```bash
+codex mcp add gateway -- mcp-gateway-service --config /absolute/path/config.json
 ```
 
 Claude Code：
 
 ```bash
-claude mcp add gateway -- mcp-gateway-service --config ./config.json
+claude mcp add gateway -- mcp-gateway-service --config /absolute/path/config.json
 ```
+
+请将 `/absolute/path/config.json` 替换为刚创建的配置文件路径。Windows 可使用 `C:/mcp/gateway/config.json` 这样的写法。使用绝对路径可避免依赖客户端的工作目录。
 
 ### Streamable HTTP
 
@@ -74,11 +49,10 @@ mcp-gateway-service --http --config ./config.json
 默认地址为 `http://127.0.0.1:3000/mcp`。
 HTTP 默认隐藏 `gateway_manage_service`。监听非回环地址时，必须通过 `MCP_GATEWAY_AUTH_TOKEN` 配置 Bearer Token。
 
-Codex `config.toml`：
+Codex：
 
-```toml
-[mcp_servers.gateway]
-url = "http://127.0.0.1:3000/mcp"
+```bash
+codex mcp add gateway --url http://127.0.0.1:3000/mcp
 ```
 
 Claude Code：
@@ -113,58 +87,62 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 {
   "logging": {
     "enable": false,
-    "path": "./logs/mcp-gateway.log"
+    "path": "./logs/mcp-gateway.log",
+    "maxBytes": 10485760
   },
   "services": [
     {
       "serviceId": "local-tools",
+      "enable": true,
       "name": "Local Tools",
+      "description": "Local MCP service",
+      "callTimeoutMs": 120000,
       "confirmationRequiredTools": ["delete_*", "deploy_?"],
       "codexAutoReview": false,
       "disabledTools": ["internal_*", "legacy_tool"],
       "transport": {
         "type": "stdio",
         "command": "your-mcp-service",
-        "args": []
+        "args": ["--config", "/absolute/path/service/config.json"],
+        "cwd": "/absolute/path/service",
+        "env": {},
+        "inheritEnv": false,
+        "envAllowlist": []
       }
     },
     {
       "serviceId": "remote-tools",
+      "enable": false,
       "name": "Remote Tools",
+      "description": "Remote MCP service",
+      "callTimeoutMs": 120000,
+      "confirmationRequiredTools": [],
+      "codexAutoReview": false,
+      "disabledTools": [],
       "transport": {
         "type": "http",
-        "url": "http://127.0.0.1:3200/mcp"
+        "url": "http://127.0.0.1:3200/mcp",
+        "headers": {
+          "Authorization": "Bearer replace-with-token"
+        }
       }
     }
   ]
 }
 ```
 
-| 字段 | 说明 |
-| --- | --- |
-| `services` | 下游 MCP 服务列表。 |
-| `serviceId` | 必填，网关工具使用的唯一服务标识。 |
-| `name` | 必填，服务名称。 |
-| `description` | 可选，服务说明。 |
-| `enable` | 可选，默认为 `true`。 |
-| `callTimeoutMs` | 可选，下游工具调用超时；默认 120 秒。 |
-| `confirmationRequiredTools` | 可选，填写区分大小写的完整工具名 glob 模式；`*` 匹配零个或多个字符，`?` 匹配一个字符。数组项必须唯一且非空，网关在调用匹配的工具前会向上游用户发起表单 elicitation。 |
-| `codexAutoReview` | 可选 boolean，默认 `false`；设为 `true` 仅启用该服务的 `confirmationRequiredTools` 触发的网关自定义确认的 Codex 自动审批元数据。 |
-| `disabledTools` | 可选，使用相同 glob 语法。匹配的工具不会出现在工具列表和 schema 查询中，调用也会在到达下游服务前被拒绝。 |
-| `transport.type` | `stdio` 或 `http`。 |
-| `transport.command` | stdio 服务必填，启动命令。 |
-| `transport.args` | stdio 服务的可选命令参数。 |
-| `transport.cwd` | stdio 服务的可选工作目录。 |
-| `transport.env` | stdio 服务的可选环境变量。 |
-| `transport.inheritEnv` | 是否继承网关完整环境；默认为 `false`。 |
-| `transport.envAllowlist` | 额外传递给 stdio 服务的进程环境变量名。 |
-| `transport.url` | HTTP 服务必填，Streamable HTTP 地址。 |
-| `transport.headers` | HTTP 服务的可选静态请求头。 |
-| `logging.enable` | 是否写入文件日志，默认为 `false`。 |
-| `logging.path` | 日志文件路径；相对路径按配置文件目录解析。 |
-| `logging.maxBytes` | 当前日志轮转前的大小上限；默认 10 MiB。 |
+按需配置并启用使用的服务；HTTP 服务无需 Token 认证时，删除 `Authorization`。
 
-网关会监听配置文件变化。配置有误时不会替换当前配置，服务继续按最后一次有效配置运行。其他示例见 [config.example.json](./config.example.json)。
+| 配置 | 使用说明 |
+| --- | --- |
+| `serviceId` | 每个服务的唯一标识。 |
+| `confirmationRequiredTools` | 完整工具名的匹配规则，区分大小写；`*` 匹配任意数量字符，`?` 匹配一个字符。匹配的调用须确认后执行。 |
+| `disabledTools` | 使用相同匹配规则，隐藏并禁止调用匹配工具，优先于确认规则。 |
+| `transport.cwd`、`transport.args` | 建议使用绝对路径；相对工作目录以网关进程目录为基准。 |
+| `transport.env`、`transport.envAllowlist` | 分别提供环境变量值或允许传递的变量名。默认不继承自定义变量；`inheritEnv: true` 才继承完整环境。配置字符串不展开 `${VAR}`。 |
+| `logging.path`、`logging.maxBytes` | 日志路径以配置目录为基准，达到大小上限时轮转。 |
+
+配置会自动重载，无效更新保留上一份有效配置。完整示例也可直接复制 [config.example.json](config.example.json)。
 
 ### 网关工具
 
@@ -179,11 +157,9 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 
 通常按 `gateway_list_services` → `gateway_list_tools` → 按需调用 `gateway_get_tool_schema` → `gateway_call_tool` 的顺序使用。下游工具没有参数时，`gateway_call_tool` 的 `arguments` 传 `{}`。
 
-匹配 `confirmationRequiredTools` 的调用会展示服务、工具和参数，须由当前 MCP 会话确认后才执行；不支持表单确认的客户端无法调用。状态不确定的失败调用不会自动重试。
+确认界面会展示服务、工具和参数，客户端须支持交互确认。执行结果不确定时不会自动重试。
 
-Codex 自动审批扩展默认禁用；在指定服务的 `services[]` 配置块中显式设置 `"codexAutoReview": true`，仅为 `confirmationRequiredTools` 触发的网关自定义确认添加审批元数据。下游确认表单及其 `_meta` 原样透传，下游自动审批配置独立生效。Codex 开启 `approvals_reviewer = "auto_review"` 时自动审查，否则使用正常的 Accept / Decline / Cancel 确认；审批结果仍由 Codex 策略决定。
-
-当一个工具同时匹配 `disabledTools` 和 `confirmationRequiredTools` 时，`disabledTools` 优先：工具会被隐藏并直接拒绝，不会发起确认。
+需要 Codex 自动审查时，在指定服务的 `services[]` 配置块中设置 `"codexAutoReview": true`，并通过 `codex -c approvals_reviewer=auto_review` 启动 Codex。该设置作用于网关确认，下游服务自己的审批需独立配置。其他情况使用 Accept / Decline / Cancel 确认，是否批准仍由 Codex 策略决定。
 
 支持 Skills 的 Agent 可以使用仓库内置的 [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) 完成工具发现和调用。
 
@@ -194,15 +170,15 @@ git clone https://github.com/jadchene/mcp-gateway.git
 cd mcp-gateway
 npm install
 npm run verify
+```
+
+按上文创建 `config.json` 后，启动开发服务：
+
+```bash
 npm run dev -- --config ./config.json
 ```
 
-构建并运行编译产物：
-
-```bash
-npm run build
-npm start -- --config ./config.json
-```
+`npm run verify` 会构建服务；之后可用 `npm start -- --config ./config.json` 运行编译产物。
 
 ## 版权声明
 
