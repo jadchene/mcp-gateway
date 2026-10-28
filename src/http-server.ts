@@ -93,7 +93,13 @@ export class StreamableHttpGatewayServer {
     const maxRequestBodyBytes = this.config.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES;
     let activeRequests = 0;
     this.server = http.createServer((request, response) => {
-      const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+      let pathname: string;
+      try {
+        pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+      } catch {
+        response.writeHead(400).end();
+        return;
+      }
       if (pathname !== this.config.path) {
         response.writeHead(404).end();
         return;

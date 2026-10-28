@@ -61,7 +61,7 @@ function createStandardTransport(
 /**
  * Resolves a configured command into a directly spawnable executable on Windows.
  */
-export function resolveCommandSpec(command: string, args: string[]): { command: string; args: string[] } {
+function resolveCommandSpec(command: string, args: string[]): { command: string; args: string[] } {
   if (process.platform !== "win32" || /[\\/]/.test(command) || /\.[A-Za-z0-9]+$/.test(command)) {
     return { command, args };
   }

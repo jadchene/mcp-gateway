@@ -314,7 +314,7 @@ export function buildGatewayTools(options: { includeAdminTools?: boolean } = {})
 /**
  * Describes one stable gateway tool registered with the MCP SDK.
  */
-export interface GatewayToolDefinition {
+interface GatewayToolDefinition {
   /**
    * Provides the public tool name.
    */

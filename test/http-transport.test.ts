@@ -75,6 +75,28 @@ test("StreamableHttpGatewayServer serves MCP 2026-07-28 without protocol session
   }
 });
 
+test("StreamableHttpGatewayServer rejects malformed request targets and remains available", async () => {
+  const server = createGatewayServer({ authToken: "test-token" });
+  await server.start();
+  try {
+    for (const target of ["http://[", "//["]) {
+      const status = await new Promise<number | undefined>((resolve, reject) => {
+        const request = http.request(server.url, { path: target }, (response) => {
+          response.resume();
+          response.once("end", () => resolve(response.statusCode));
+        });
+        request.setTimeout(2000, () => request.destroy(new Error("请求超时")));
+        request.once("error", reject);
+        request.end();
+      });
+      assert.equal(status, 400);
+    }
+    assert.equal((await fetch(server.url)).status, 401);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("StreamableHttpGatewayServer enforces bearer auth and gates admin tools", async () => {
   const server = createGatewayServer({ authToken: "test-token", enableAdminTools: true });
   await server.start();

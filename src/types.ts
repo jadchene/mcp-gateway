@@ -247,7 +247,7 @@ export interface ServiceMetadata {
 /**
  * Describes the runtime status of one managed service process.
  */
-export interface ServiceRuntimeStatus {
+interface ServiceRuntimeStatus {
   /**
    * Indicates whether the gateway currently considers the service available.
    */

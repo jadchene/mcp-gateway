@@ -442,7 +442,7 @@ export interface CallToolResult {
 /**
  * Describes the compact result returned from a service management action.
  */
-export interface ManageServiceResult {
+interface ManageServiceResult {
   /**
    * Identifies the logical service targeted by the action.
    */

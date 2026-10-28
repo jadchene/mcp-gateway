@@ -27,7 +27,7 @@ const MAX_TOOL_CATALOG_BYTES = 5 * 1024 * 1024;
 /**
  * Creates one fresh SDK transport for a downstream connection attempt.
  */
-export type SdkTransportFactory = () => Transport;
+type SdkTransportFactory = () => Transport;
 
 /**
  * Implements shared MCP SDK v2 client behavior for stdio and HTTP transports.
