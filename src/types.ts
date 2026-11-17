@@ -86,6 +86,8 @@ export interface LoggingConfig {
  * Declares one logical MCP service managed by the gateway.
  */
 export interface ServiceConfig {
+  /** 下游独立 Web 配置页面地址，仅用于浏览器跳转。 */
+  webUrl?: string;
   /**
    * Provides the unique logical identifier used by the gateway API.
    */

@@ -87,7 +87,7 @@ export class ServiceRegistry {
   /**
    * Serializes reloads and lets startup and management callers observe failures.
    */
-  private async reloadStrict(): Promise<void> {
+  public async reloadStrict(): Promise<void> {
     this.reloadPromise = this.reloadPromise.catch(() => undefined).then(async () => {
       const absolutePath = resolve(this.configPath);
       this.logger.info("config.reload.started", { configPath: absolutePath });

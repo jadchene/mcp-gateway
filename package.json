@@ -1,6 +1,6 @@
 {
   "name": "@jadchene/mcp-gateway-service",
-  "version": "0.11.3",
+  "version": "0.12.0",
   "description": "A token-efficient MCP gateway that provides one unified entry point for multiple downstream MCP services.",
   "type": "module",
   "main": "dist/index.js",
@@ -20,16 +20,19 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "prebuild": "npm run clean",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && vite build --configLoader native --config web/vite.config.mjs",
     "dev": "node --experimental-strip-types src/index.ts",
     "start": "node dist/index.js",
     "pretest": "npm run build",
-    "test": "node --test --experimental-strip-types test/**/*.test.ts",
+    "test": "node --test --experimental-strip-types test/**/*.test.ts && npm run test:web",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify": "npm run typecheck && npm test",
     "version": "node dist/index.js --version",
     "prepack": "npm run build",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "build:web": "vite build --configLoader native --config web/vite.config.mjs",
+    "test:web": "node --test tests-web/*.test.mjs",
+    "verify:web-package": "node scripts/verify-web-package.mjs"
   },
   "files": [
     "dist",
@@ -52,7 +55,11 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "typescript": "^5.8.0"
+    "@vitejs/plugin-vue": "^6.0.11",
+    "element-plus": "^2.14.8",
+    "typescript": "^5.8.0",
+    "vite": "^8.3.8",
+    "vue": "^3.5.45"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.4.0",

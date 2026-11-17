@@ -11,18 +11,28 @@
       "name": "Local Tools",
       "description": "Local MCP service",
       "callTimeoutMs": 120000,
-      "confirmationRequiredTools": ["delete_*", "deploy_?"],
+      "confirmationRequiredTools": [
+        "delete_*",
+        "deploy_?"
+      ],
       "codexAutoReview": false,
-      "disabledTools": ["internal_*", "legacy_tool"],
+      "disabledTools": [
+        "internal_*",
+        "legacy_tool"
+      ],
       "transport": {
         "type": "stdio",
         "command": "your-mcp-service",
-        "args": ["--config", "/absolute/path/service/config.json"],
+        "args": [
+          "--config",
+          "/absolute/path/service/config.json"
+        ],
         "cwd": "/absolute/path/service",
         "env": {},
         "inheritEnv": false,
         "envAllowlist": []
-      }
+      },
+      "webUrl": "http://127.0.0.1:3101"
     },
     {
       "serviceId": "remote-tools",
@@ -41,5 +51,10 @@
         }
       }
     }
-  ]
+  ],
+  "web": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 3100
+  }
 }

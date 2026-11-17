@@ -1,3 +1,4 @@
+import { validateWebConfig } from "./web-config/options.ts";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type {
@@ -41,6 +42,7 @@ export function validateGatewayConfig(input: unknown, baseDir = process.cwd()): 
     throw new Error(`The 'services' field cannot contain more than ${MAX_SERVICES} entries.`);
   }
 
+  validateWebConfig(input.web);
   const services = input.services.map(validateServiceConfig);
   const seenServiceIds = new Set<string>();
 
@@ -109,6 +111,11 @@ function validateServiceConfig(input: unknown): ServiceConfig {
   const enable = optionalBoolean(input.enable, `service '${serviceId}' enable`) ?? true;
   const codexAutoReview = optionalBoolean(input.codexAutoReview, `service '${serviceId}' codexAutoReview`) ?? false;
   const name = requireNonEmptyString(input.name, `service '${serviceId}' name`);
+  const webUrl = optionalString(input.webUrl, `service ${serviceId} webUrl`);
+  if (webUrl) {
+    const parsed = new URL(webUrl);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error("webUrl must be an HTTP(S) URL without credentials");
+  }
   const description = optionalString(input.description, `service '${serviceId}' description`);
   const callTimeoutMs = optionalInteger(
     input.callTimeoutMs,
@@ -127,6 +134,7 @@ function validateServiceConfig(input: unknown): ServiceConfig {
 
   return {
     serviceId,
+    ...(webUrl === undefined ? {} : { webUrl }),
     enable,
     codexAutoReview,
     name,

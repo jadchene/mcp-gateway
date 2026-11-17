@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import { ConfigWebServer } from "./web-config/server.ts";
+import { parseWebArgs } from "./web-config/options.ts";
+import { validateGatewayConfig } from "./config.ts";
+import { dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { ConfigLoader } from "./config.ts";
@@ -59,6 +63,9 @@ class Application {
    */
   private httpServer: StreamableHttpGatewayServer | null = null;
 
+  /** 独立的配置页面服务。 */
+  private webServer?: ConfigWebServer;
+
   /**
    * Stores the file watcher used for config hot reload.
    */
@@ -79,24 +86,39 @@ class Application {
       throw new Error(`Config file was not found: ${this.configPath}`);
     }
 
-    const startup = this.registry.initialize();
-    this.engine.setStartupBarrier(startup);
-    this.server.start();
-    await startup;
+    try {
+      const startup = this.registry.initialize();
+      this.engine.setStartupBarrier(startup);
+      this.server.start();
+      await startup;
 
-    const serverConfig = this.cliOptions.server;
-    this.registerSignals(Boolean(serverConfig));
+      const serverConfig = this.cliOptions.server;
+      this.registerSignals(Boolean(serverConfig));
 
-    if (serverConfig) {
-      this.httpServer = new StreamableHttpGatewayServer(serverConfig, this.engine, this.logger);
-      await this.httpServer.start();
+      if (serverConfig) {
+        this.httpServer = new StreamableHttpGatewayServer(serverConfig, this.engine, this.logger);
+        await this.httpServer.start();
+      }
+
+      this.webServer = new ConfigWebServer({
+        project: "gateway", configPath: this.configPath, args: process.argv.slice(2), defaultPort: 3100,
+        validate: raw => validateGatewayConfig(raw, dirname(this.configPath)), reload: () => this.registry.reloadStrict(),
+        startup: { mcpHttp: this.cliOptions.server ? { ...this.cliOptions.server, authToken: this.cliOptions.server.authToken ? "已配置（环境变量）" : "未配置" } : { enable: false }, source: "命令行 / 默认值" }
+      });
+      await this.webServer.start();
+      this.watcher.start();
+
+      this.logger.info("gateway.started", {
+        configPath: this.configPath
+      });
+    } catch (error) {
+      this.watcher.stop();
+      await this.webServer?.close();
+      await this.httpServer?.stop();
+      await this.server.stop();
+      await this.registry.dispose();
+      throw error;
     }
-
-    this.watcher.start();
-
-    this.logger.info("gateway.started", {
-      configPath: this.configPath
-    });
   }
 
   /**
@@ -111,6 +133,7 @@ class Application {
 
       this.logger.info("gateway.stopping", { signal });
       this.watcher.stop();
+      await this.webServer?.close();
       await this.httpServer?.stop();
       await this.server.stop();
       await this.registry.dispose();
@@ -143,6 +166,7 @@ if (import.meta.main) {
 }
 
 export function parseCliArgs(args: string[]): CliOptions {
+  args = parseWebArgs(args).remaining;
   if (args.includes("--protocol-mode")) {
     throw new Error("--protocol-mode is no longer supported; protocol negotiation is automatic.");
   }
