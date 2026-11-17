@@ -48,6 +48,56 @@ export class ServiceRegistry {
   private reloadPromise: Promise<void> = Promise.resolve();
 
   private managementPromise: Promise<void> = Promise.resolve();
+  /** 用户停止状态跨配置热重载保留，Gateway 重启后重新按配置加载。 */
+  private stopped = new Set<string>();
+  /** 当前执行中的生命周期动作，用于页面状态和调用拦截。 */
+  private transitions = new Map<string, "starting" | "stopping">();
+
+  /** 返回页面所需的运行信息，不包含启动参数和凭据。 */
+  public listServiceStates() {
+    return this.listServices().map(snapshot => {
+      const id = snapshot.config.serviceId;
+      const client = this.clients.get(id);
+      return {
+        serviceId: id,
+        status: this.transitions.get(id) ?? (this.stopped.has(id) ? "stopped"
+          : client?.isConnected ? "running" : "failed"),
+        lastError: snapshot.runtime.lastError ?? (!client?.isConnected && !this.stopped.has(id) && !this.transitions.has(id) ? "下游连接已关闭" : null),
+        lastConnectedAt: snapshot.runtime.lastConnectedAt,
+        toolCount: this.listTools(id).length
+      };
+    });
+  }
+
+  /** 串行控制已启用服务，停止操作不修改配置文件。 */
+  public controlService(serviceId: string, action: "start" | "stop" | "restart"): Promise<void> {
+    const operation = this.reloadPromise.catch(() => undefined).then(async () => {
+      const snapshot = this.requireService(serviceId);
+      const current = this.clients.get(serviceId);
+      if (action === "start" && current?.isConnected && !this.stopped.has(serviceId)) return;
+      this.transitions.set(serviceId, action === "stop" ? "stopping" : "starting");
+      try {
+        this.stopped.add(serviceId);
+        await current?.dispose();
+        snapshot.runtime.available = false;
+        snapshot.runtime.lastError = null;
+        if (action === "stop") return;
+        this.stopped.delete(serviceId);
+        const next = createClient(snapshot.config, this.logger);
+        this.clients.set(serviceId, next);
+        snapshot.metadata = await next.getMetadata();
+        this.markServiceAvailable(serviceId, next.restartCount);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.markServiceUnavailable(serviceId, message, this.clients.get(serviceId)?.restartCount ?? 0);
+        throw error;
+      } finally {
+        this.transitions.delete(serviceId);
+      }
+    });
+    this.reloadPromise = operation.catch(() => undefined);
+    return operation;
+  }
 
   /**
    * Creates a registry bound to one config file path.
@@ -183,6 +233,9 @@ export class ServiceRegistry {
     context: DownstreamCallContext = {}
   ): Promise<CallToolResult> {
     const snapshot = this.requireService(serviceId);
+    if (this.stopped.has(serviceId) || this.transitions.has(serviceId)) {
+      throw new Error(`Service '${serviceId}' is stopped or changing state.`);
+    }
     if (matchesAnyToolNamePattern(toolName, snapshot.config.disabledTools)) {
       throw new Error(`Tool '${toolName}' in service '${serviceId}' is disabled by gateway configuration.`);
     }
@@ -243,6 +296,15 @@ export class ServiceRegistry {
    * Reconnects one currently configured service and refreshes its metadata snapshot.
    */
   private async reconnectService(serviceId: string): Promise<ManageServiceResult> {
+    // 与配置重载共用队列，防止两个替换操作同时启动同一服务。
+    const operation = this.reloadPromise.catch(() => undefined)
+      .then(() => this.reconnectServiceOnce(serviceId));
+    this.reloadPromise = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  /** 在注册表生命周期队列中执行一次重连。 */
+  private async reconnectServiceOnce(serviceId: string): Promise<ManageServiceResult> {
     const snapshot = this.requireService(serviceId);
     const previousRuntime = snapshot.runtime;
     const currentClient = this.clients.get(serviceId);
@@ -251,6 +313,9 @@ export class ServiceRegistry {
     }
 
     const nextClient = createClient(snapshot.config, this.logger);
+    const restartProcess = snapshot.config.transport.type === "stdio";
+    // stdio 子进程可能持有 Web 端口等独占资源，必须先关闭旧实例。
+    if (restartProcess) await currentClient.dispose();
 
     try {
       const metadata = await nextClient.getMetadata();
@@ -263,6 +328,7 @@ export class ServiceRegistry {
         restartAttempts: nextClient.restartCount
       };
       this.clients.set(serviceId, nextClient);
+      this.stopped.delete(serviceId);
       await currentClient.dispose().catch(() => undefined);
 
       return {
@@ -274,11 +340,21 @@ export class ServiceRegistry {
     } catch (error) {
       await nextClient.dispose().catch(() => undefined);
       const message = error instanceof Error ? error.message : String(error);
+      let restored = false;
+      if (restartProcess) {
+        try {
+          currentClient.activate();
+          snapshot.metadata = await currentClient.getMetadata();
+          restored = true;
+        } catch {
+          // 原配置也无法恢复时，保留明确的不可用状态。
+        }
+      }
 
       snapshot.runtime = {
-        available: previousRuntime.available,
-        lastError: `Reconnect failed; existing connection retained: ${message}`,
-        lastConnectedAt: previousRuntime.lastConnectedAt,
+        available: restartProcess ? restored : previousRuntime.available,
+        lastError: `Reconnect failed; ${restartProcess ? (restored ? "previous configuration restored" : "previous configuration could not be restored") : "existing connection retained"}: ${message}`,
+        lastConnectedAt: restored ? new Date().toISOString() : previousRuntime.lastConnectedAt,
         restartAttempts: currentClient.restartCount
       };
 
@@ -286,7 +362,7 @@ export class ServiceRegistry {
         serviceId,
         action: "reconnect",
         enabled: true,
-        available: previousRuntime.available
+        available: snapshot.runtime.available
       };
     }
   }
@@ -338,6 +414,11 @@ export class ServiceRegistry {
       ? reusedClient
       : createClient(service, this.logger);
     nextClients.set(service.serviceId, client);
+    if (reusedClient && reusedClient !== client
+      && this.snapshots.get(service.serviceId)?.config.transport.type === "stdio") {
+      // 配置切换前释放旧进程的监听端口，避免新旧实例争用同一端口。
+      await reusedClient.dispose();
+    }
 
     let metadata: ServiceMetadata = {
       protocolVersion: null,
@@ -352,6 +433,9 @@ export class ServiceRegistry {
     let lastConnectedAt: string | null = null;
 
     try {
+      if (this.stopped.has(service.serviceId)) {
+        return { config: service, metadata, runtime: { available: false, lastError: null, lastConnectedAt: null, restartAttempts: 0 } };
+      }
       metadata = await client.getMetadata();
       available = true;
       lastConnectedAt = new Date().toISOString();

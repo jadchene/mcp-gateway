@@ -260,3 +260,63 @@ test('Real CLI defaults to disabled and --no-web overrides enabled file without 
     await closed;
   }
 });
+
+test('Web port failure warns while MCP stdio and Gateway HTTP remain usable', { timeout: 25000 }, async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), `mcp-${project}-web-failure-`));
+  const configPath = path.join(directory, 'config.json');
+  const occupied = http.createServer((_req, res) => res.end('original listener'));
+  await new Promise(resolve => occupied.listen(0, '127.0.0.1', resolve));
+  const webPort = occupied.address().port;
+  t.after(async () => { occupied.closeAllConnections(); await new Promise(resolve => occupied.close(resolve)); await rm(directory, {recursive: true, force: true}); });
+  const original = JSON.stringify({...baseConfig(), web: {enabled: true, port: webPort}});
+  await writeFile(configPath, original);
+  for (const httpMode of project === 'gateway' ? [false, true] : [false]) {
+    const mcpPort = httpMode ? await port() : undefined;
+    const child = spawn(process.execPath, ['dist/index.js', '--config', configPath, ...(httpMode ? ['--http', '--port', String(mcpPort)] : [])], {stdio: ['pipe', 'pipe', 'pipe']});
+    t.after(() => child.kill());
+    let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    const initialize = {jsonrpc: '2.0', id: 91, method: 'initialize', params: {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'web-failure', version: '1'}}};
+    await waitFor(() => stderr.includes('MCP continues'), child);
+    assert.match(stderr, /EADDRINUSE/);
+    if (httpMode) {
+      const response = await fetch(`http://127.0.0.1:${mcpPort}/mcp`, {method: 'POST', headers: {'Content-Type': 'application/json', Accept: 'application/json, text/event-stream'}, body: JSON.stringify(initialize)});
+      assert.equal(response.status, 200);
+      assert.match(await response.text(), /"protocolVersion"/);
+    } else {
+      child.stdin.write(JSON.stringify(initialize) + '\n');
+      await waitFor(() => stdout.includes('"id":91'), child);
+      const response = stdout.split('\n').filter(Boolean).map(line => JSON.parse(line)).find(value => value.id === 91);
+      assert.ok(response.result?.protocolVersion);
+    }
+    assert.equal((await fetch(`http://127.0.0.1:${webPort}`)).status, 200);
+    assert.equal(await readFile(configPath, 'utf8'), original);
+    const exited = new Promise(resolve => child.once('exit', resolve));
+    if (httpMode) child.kill(); else child.stdin.end();
+    await exited;
+    if (!httpMode) assert.equal(child.exitCode, 0);
+  }
+});
+
+
+test('Gateway service API enforces origin and action validation', {skip: project !== 'gateway'}, async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'gateway-control-api-'));
+  const configPath = path.join(directory, 'config.json');
+  await writeFile(configPath, JSON.stringify(baseConfig()));
+  const webPort = await port();
+  const actions = [];
+  const server = new ConfigWebServer({project, configPath, args: ['--web'], defaultPort: webPort, validate: () => {}, reload: () => {}, services: {
+    list: () => [{serviceId: 'demo', status: 'running'}], control: async (id, action) => { actions.push({id, action}); }
+  }});
+  await server.start();
+  t.after(async () => { await server.close(); await rm(directory, {recursive: true, force: true}); });
+  const origin = `http://127.0.0.1:${webPort}`;
+  assert.equal((await (await fetch(origin + '/api/services')).json()).services[0].status, 'running');
+  const post = (body, source = origin) => fetch(origin + '/api/services', {method: 'POST', headers: {'Content-Type': 'application/json', ...(source ? {Origin: source} : {})}, body: JSON.stringify(body)});
+  for (const source of ['', 'http://evil.example']) assert.equal((await post({serviceId: 'demo', action: 'stop'}, source)).status, 403);
+  for (const action of ['delete', ['start'], null]) assert.equal((await post({serviceId: 'demo', action})).status, 400);
+  assert.deepEqual(actions, []);
+  for (const action of ['start', 'stop', 'restart']) assert.equal((await post({serviceId: 'demo', action})).status, 200);
+  assert.equal(actions.length, 3);
+});

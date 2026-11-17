@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import { ConfigLoader } from "../src/config.ts";
 import { Logger } from "../src/logger.ts";
 import { ServiceRegistry } from "../src/service-registry.ts";
@@ -243,7 +244,7 @@ test("ServiceRegistry can reconnect an unavailable service", async () => {
   await registry.dispose();
 });
 
-test("ServiceRegistry retains the active client when replacement reconnect fails", async () => {
+test("ServiceRegistry restores the previous stdio configuration when replacement reconnect fails", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-"));
   const configPath = join(tempDir, "config.json");
   const echoServicePath = join(process.cwd(), "examples", "echo-service.ts");
@@ -276,10 +277,10 @@ test("ServiceRegistry retains the active client when replacement reconnect fails
       serviceId: "demo-echo",
       action: "reconnect",
       enabled: true,
-      available: false
+      available: true
     });
-    assert.equal(registry.getService("demo-echo")?.runtime.available, false);
-    assert.match(registry.getService("demo-echo")?.runtime.lastError ?? "", /existing connection retained/);
+    assert.equal(registry.getService("demo-echo")?.runtime.available, true);
+    assert.match(registry.getService("demo-echo")?.runtime.lastError ?? "", /previous configuration restored/);
 
     const call = await registry.callTool("demo-echo", "echo", { message: "still-alive" });
     const downstream = call.result as { structuredContent?: { echoed?: string } };
@@ -354,4 +355,67 @@ test("ServiceRegistry hot reload updates the active log file target", async () =
   assert.match(secondLogContent, /config\.reload\.succeeded/);
 
   await registry.dispose();
+});
+
+test("ServiceRegistry reuses presentation changes and releases stdio ports before replacements", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-gateway-port-"));
+  const configPath = join(tempDir, "config.json");
+  const reservation = createServer();
+  await new Promise<void>(resolve => reservation.listen(0, "127.0.0.1", resolve));
+  const port = (reservation.address() as import("node:net").AddressInfo).port;
+  await new Promise<void>(resolve => reservation.close(() => resolve()));
+  const service = {
+    serviceId: "web-service", name: "Web service", webUrl: "", callTimeoutMs: 120000,
+    transport: {
+      type: "stdio", command: process.execPath,
+      args: [join(process.cwd(), "test/fixtures/port-owning-service.ts")],
+      env: { MCP_TEST_WEB_PORT: String(port) }
+    }
+  };
+  const save = () => writeFile(configPath, JSON.stringify({services: [service]}));
+  const pid = async () => (await fetch(`http://127.0.0.1:${port}`, {signal: AbortSignal.timeout(3000)})).text();
+  const registry = new ServiceRegistry(configPath, new ConfigLoader(), new Logger());
+  try {
+    await save();
+    await registry.initialize();
+    assert.equal(registry.getService(service.serviceId)?.runtime.available, true);
+    const originalPid = await pid();
+    service.webUrl = `http://127.0.0.1:${port}`;
+    service.name = "Renamed";
+    await save();
+    await registry.reloadStrict();
+    assert.equal(await pid(), originalPid);
+    service.callTimeoutMs = 60000;
+    await save();
+    await registry.reloadStrict();
+    assert.equal(registry.getService(service.serviceId)?.runtime.available, true);
+    const replacedPid = await pid();
+    assert.notEqual(replacedPid, originalPid);
+    const results = await Promise.all([
+      registry.manageService(service.serviceId, "reconnect"),
+      registry.manageService(service.serviceId, "reconnect")
+    ]);
+    assert.ok(results.every(result => result.available));
+    assert.notEqual(await pid(), replacedPid);
+    const originalConfig = await readFile(configPath, "utf8");
+    await registry.controlService(service.serviceId, "stop");
+    assert.equal(registry.listServiceStates()[0]?.status, "stopped");
+    await assert.rejects(pid());
+    await assert.rejects(registry.callTool(service.serviceId, "echo", {message: "blocked"}), /stopped/);
+    await registry.reloadStrict();
+    assert.equal(registry.listServiceStates()[0]?.status, "stopped");
+    await assert.rejects(pid());
+    await registry.controlService(service.serviceId, "start");
+    assert.equal(registry.listServiceStates()[0]?.status, "running");
+    const startedPid = await pid();
+    await registry.controlService(service.serviceId, "start");
+    assert.equal(await pid(), startedPid);
+    await registry.controlService(service.serviceId, "restart");
+    assert.notEqual(await pid(), startedPid);
+    assert.equal(await readFile(configPath, "utf8"), originalConfig);
+    await assert.rejects(registry.controlService("unknown-service", "start"), /Unknown/);
+  } finally {
+    await registry.dispose();
+  }
+  await assert.rejects(pid());
 });

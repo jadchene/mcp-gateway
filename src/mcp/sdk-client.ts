@@ -42,6 +42,7 @@ export class SdkMcpClient implements McpClient {
   private readonly logger: Logger;
   private readonly transportFactory: SdkTransportFactory;
   private client: Client | null = null;
+  private disposed = false;
   private connecting: Promise<void> | null = null;
   private restartAttempts = 0;
   private unavailableReason: string | null = null;
@@ -69,6 +70,12 @@ export class SdkMcpClient implements McpClient {
     return this.unavailableReason !== null;
   }
 
+  /** 显示实际连接状态，连接关闭后立即变为 false。 */
+  public get isConnected(): boolean { return this.client !== null; }
+
+  /** 仅由显式启动或恢复操作重新启用连接。 */
+  public activate(): void { this.disposed = false; }
+
   /**
    * Returns the terminal unavailability reason.
    */
@@ -87,13 +94,16 @@ export class SdkMcpClient implements McpClient {
    * Checks whether this client can be reused after config reload.
    */
   public matchesConfig(service: ServiceConfig): boolean {
-    return JSON.stringify(this.service) === JSON.stringify(service);
+    // 页面地址、名称及工具过滤由注册表处理，不应触发下游进程重启。
+    return JSON.stringify(this.service.transport) === JSON.stringify(service.transport)
+      && this.service.callTimeoutMs === service.callTimeoutMs;
   }
 
   /**
    * Establishes an SDK connection with the configured era negotiation policy.
    */
   public async ensureConnected(): Promise<void> {
+    if (this.disposed) throw new Error(`Service '${this.key}' is stopped.`);
     if (this.client) {
       return;
     }
@@ -116,6 +126,8 @@ export class SdkMcpClient implements McpClient {
    * Closes the SDK client and clears lifecycle errors.
    */
   public async dispose(): Promise<void> {
+    this.disposed = true;
+    await this.connecting?.catch(() => undefined);
     this.restartAttempts = 0;
     this.unavailableReason = null;
     await this.disposeConnection();
@@ -248,6 +260,10 @@ export class SdkMcpClient implements McpClient {
     const transport = transportFactory();
     try {
       await client.connect(transport, { timeout: CONNECT_TIMEOUT_MS });
+      if (this.disposed) {
+        await client.close();
+        throw new Error(`Service '${this.key}' is stopped.`);
+      }
       this.client = client;
       this.logger.info("downstream.connected", {
         serviceId: this.key,

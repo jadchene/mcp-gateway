@@ -102,10 +102,14 @@ class Application {
 
       this.webServer = new ConfigWebServer({
         project: "gateway", configPath: this.configPath, args: process.argv.slice(2), defaultPort: 3100,
+        services: {
+          list: () => this.registry.listServiceStates(),
+          control: (id, action) => this.registry.controlService(id, action)
+        },
         validate: raw => validateGatewayConfig(raw, dirname(this.configPath)), reload: () => this.registry.reloadStrict(),
         startup: { mcpHttp: this.cliOptions.server ? { ...this.cliOptions.server, authToken: this.cliOptions.server.authToken ? "已配置（环境变量）" : "未配置" } : { enable: false }, source: "命令行 / 默认值" }
       });
-      await this.webServer.start();
+      await this.webServer.startOptional();
       this.watcher.start();
 
       this.logger.info("gateway.started", {

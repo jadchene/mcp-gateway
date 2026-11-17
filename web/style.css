@@ -188,7 +188,7 @@ p {
   vertical-align: middle;
 }
 .resource-dot.enabled {
-  background: #48a284;
+  background: #16c46c;
 }
 .workspace {
   max-width: 1344px;
@@ -1281,7 +1281,8 @@ p {
 .el-select__wrapper,
 .el-input__inner,
 .el-textarea__inner {
-  font-family: var(--app-font-family);
+  /* 英文及符号优先使用 Segoe UI，避免小字号下下划线不可见。 */
+  font-family: "Segoe UI", var(--app-font-family);
 }
 .el-select__wrapper,
 .el-input__inner {

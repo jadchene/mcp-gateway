@@ -27,6 +27,11 @@ export interface ConfigWebAdapter {
   reload: () => Promise<unknown> | unknown;
   /** 额外的只读启动信息，不包含凭据。 */
   startup?: unknown;
+  /** Gateway 下游运行控制；其他项目不提供此入口。 */
+  services?: {
+    list: () => unknown;
+    control: (id: string, action: "start" | "stop" | "restart") => Promise<void>;
+  };
 }
 
 /** 为固定配置文件提供受保护的管理页面。
@@ -160,8 +165,11 @@ export class ConfigWebServer {
             },
           });
         }
+        if (pathname === "/api/services" && request.method === "GET" && this.adapter.services) {
+          return reply(200, { services: this.adapter.services.list() });
+        }
         if (
-          !["/api/config", "/api/validate"].includes(pathname) ||
+          !["/api/config", "/api/validate", ...(this.adapter.services ? ["/api/services"] : [])].includes(pathname) ||
           request.method !== "POST"
         )
           return reply(404, { error: "Not found" });
@@ -171,6 +179,13 @@ export class ConfigWebServer {
         )
           return reply(403, { error: "JSON and same-origin request required" });
         const body = await readBody(request);
+        if (pathname === "/api/services" && this.adapter.services) {
+          if (typeof body.serviceId !== "string" || typeof body.action !== "string" || !["start", "stop", "restart"].includes(body.action)) {
+            return reply(400, { error: "服务标识或操作无效" });
+          }
+          await this.adapter.services.control(body.serviceId, body.action as "start" | "stop" | "restart");
+          return reply(200, { services: this.adapter.services.list() });
+        }
         const run = async () => {
           const current = await this.snapshot();
           if (body.revision !== current.revision)
@@ -229,6 +244,17 @@ export class ConfigWebServer {
       });
     });
     process.stderr.write(`Configuration Web: ${url} (local only)\n`);
+  }
+
+  /** Web 是可选入口，启动失败时释放资源并让 MCP 继续运行。 */
+  async startOptional(): Promise<void> {
+    try {
+      await this.start();
+    } catch (error) {
+      await this.close();
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[warn] Configuration Web failed to start; MCP continues: ${message}\n`);
+    }
   }
 
   /** 停止入口并等待已开始的保存完成。 */

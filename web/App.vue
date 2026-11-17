@@ -5,6 +5,7 @@ import ResourceEditor from "./ResourceEditor.vue";
 import GlobalSettings from "./GlobalSettings.vue";
 import UiIcon from "./UiIcon.vue";
 import RuntimeInfo from "./RuntimeInfo.vue";
+import ServiceStatus from "./ServiceStatus.vue";
 import { validateFormTypes } from "../src/web-config/schema.ts";
 const appVersion = __APP_VERSION__;
 
@@ -374,6 +375,12 @@ onBeforeUnmount(() => {
           {{ meta.resource
           }}<span class="nav-count">{{ entries.length }}</span></button
         ><button
+          v-if="project === 'gateway'"
+          :class="{ active: section === 'services' }"
+          @click="section = 'services'"
+        >
+          <UiIcon name="gateway" />服务状态</button
+        ><button
           :class="{ active: section === 'general' }"
           @click="section = 'general'"
         >
@@ -396,7 +403,7 @@ onBeforeUnmount(() => {
                 ? meta.resource
                 : section === "general"
                   ? "通用设置"
-                  : "运行信息"
+                  : section === "services" ? "服务状态" : "运行信息"
             }}
           </h1>
           <span v-if="section === 'resources'" class="resource-total"
@@ -405,7 +412,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="header-actions">
           <span
-            v-if="section !== 'startup' || dirty"
+            v-if="(section !== 'startup' && section !== 'services') || dirty"
             class="save-state"
             :class="{ dirty }"
             ><span class="status-dot" />{{
@@ -418,6 +425,7 @@ onBeforeUnmount(() => {
             class="discard-button"
             ><UiIcon name="undo" />撤销修改</el-button
           ><el-button
+            v-if="section !== 'services'"
             @click="load"
             :disabled="busy"
             :loading="busy && operation === 'load'"
@@ -426,7 +434,7 @@ onBeforeUnmount(() => {
               section === "startup" ? "刷新信息" : "重新加载"
             }}</el-button
           ><el-button
-            v-if="section !== 'startup' || dirty"
+            v-if="(section !== 'startup' && section !== 'services') || dirty"
             type="primary"
             @click="save"
             :disabled="!dirty || busy"
@@ -540,6 +548,7 @@ onBeforeUnmount(() => {
           :project="project"
           v-model="draft"
         />
+        <ServiceStatus v-else-if="section === 'services'" :services="data.config.services" />
         <RuntimeInfo v-else :data="data" />
         <footer v-if="section !== 'startup'" class="workspace-footer">
           <button

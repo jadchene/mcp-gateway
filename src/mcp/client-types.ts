@@ -47,6 +47,10 @@ export interface McpClient {
    * Returns a stable key for logs.
    */
   readonly key: string;
+  /** 当前协议连接是否仍然存在。 */
+  readonly isConnected: boolean;
+  /** 允许已显式停止的客户端重新建立连接。 */
+  activate(): void;
   /**
    * Indicates whether the service has become unavailable after recovery exhaustion.
    */
