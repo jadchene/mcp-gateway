@@ -9,10 +9,10 @@ Use the gateway as the single entry point for downstream MCP services.
 
 ## Workflow
 
-Start with `gateway_list_services`. Choose the downstream service by description and use its returned `serviceId`. Follow the top-level `transparentTools` flag.
+If the matching tool is already available from this gateway in the current session, call it directly. Otherwise, reuse the known `serviceId` and mode. Call `gateway_list_services` only when the service ID or mode is unclear. Its `transparentTools` flag gives the current mode.
 
-- **`true`** — In the client's tool search, filter for this gateway and the selected `serviceId`, then narrow by action keywords. Call the matching published tool directly with its own arguments.
-- **`false`** — Search the selected service with `gateway_list_tools`. Obtain unfamiliar or safety-sensitive schemas with `includeSchema: true` or `gateway_get_tool_schema`, then call `gateway_call_tool` with the confirmed identifiers and arguments. Reuse confirmed tool names and schemas. For batch schema requests, resolve only names listed in `errors`.
+- **Transparent (`true`)** — To find a tool, search this gateway by `serviceId` and action keywords. Call the matching published tool with its own arguments.
+- **Routing (`false`)** — Call `gateway_call_tool` with the known service ID, tool name, and arguments. Use `gateway_list_tools` to find missing tool names. Obtain unfamiliar or safety-sensitive schemas with `includeSchema: true` or `gateway_get_tool_schema`. For batch schema requests, resolve only names listed in `errors`.
 
 ## Diagnostics and Control
 
