@@ -7,6 +7,7 @@ import {
   type ElicitRequestFormParams,
   type InputRequiredResult,
   type JsonSchemaType,
+  type RegisteredTool,
   type ServerContext,
   type ServerOptions
 } from "@modelcontextprotocol/server";
@@ -14,20 +15,32 @@ import { buildGatewayTools, McpGatewayEngine } from "../gateway-engine.ts";
 import { VERSION } from "../version.ts";
 import type { DownstreamCallContext } from "./client-types.ts";
 import { SUPPORTED_MCP_PROTOCOL_VERSIONS } from "./versions.ts";
-import { createInputSchema } from "./input-schema.ts";
+import { createInputSchema, downstreamSchema } from "./input-schema.ts";
+
+/** 在整份目录替换后一次性通知客户端。
+ * @author chenjd
+ * @created 2026-11-19 21:17:04
+ */
+class GatewayMcpServer extends McpServer {
+  /** 注册和移除一批工具时，由目录发布者统一通知。 */
+  public override sendToolListChanged(): void {}
+}
 
 /**
  * Creates one SDK server instance with the selected gateway tool surface.
  */
 export function createGatewayMcpServer(
   engine: McpGatewayEngine,
-  options: { includeAdminTools?: boolean } = {}
+  options: { includeAdminTools?: boolean; perRequest?: boolean; configuredServiceIds?: string[] } = {}
 ): McpServer {
   const serverOptions: ServerOptions = {
+    ...(engine.registry.toolCatalog ? {
+      instructions: `Start with gateway_list_services for the current service IDs and tool discovery mode. Follow its transparentTools flag. Services at connection time: ${(options.configuredServiceIds ?? engine.registry.listServices().map(({ config }) => config.serviceId)).join(", ")}.`
+    } : {}),
     supportedProtocolVersions: [...SUPPORTED_MCP_PROTOCOL_VERSIONS],
     capabilities: {
       tools: {
-        listChanged: false
+        listChanged: true
       }
     },
     cacheHints: {
@@ -36,22 +49,24 @@ export function createGatewayMcpServer(
         cacheScope: "public"
       },
       "tools/list": {
-        ttlMs: 300_000,
-        cacheScope: "public"
+        ttlMs: 0,
+        cacheScope: "private"
       }
     },
     inputRequired: {
       maxRounds: 8
     }
   };
-  const server = new McpServer({ name: "mcp-gateway", version: VERSION }, serverOptions);
+  const server = new GatewayMcpServer({ name: "mcp-gateway", version: VERSION }, serverOptions);
+  const registered: RegisteredTool[] = [];
+  const gatewayTools = buildGatewayTools(options);
 
-  for (const tool of buildGatewayTools(options)) {
+  const registerGatewayTool = (tool: (typeof gatewayTools)[number]) => {
     const inputSchema = createInputSchema(tool.inputSchema);
     const outputSchema = tool.outputSchema
       ? fromJsonSchema<unknown>(tool.outputSchema as JsonSchemaType)
       : undefined;
-    server.registerTool(
+    return server.registerTool(
       tool.name,
       {
         description: tool.description,
@@ -69,6 +84,41 @@ export function createGatewayMcpServer(
         );
       }
     );
+  };
+
+  const refresh = () => {
+    for (const handle of registered) handle.remove();
+    registered.length = 0;
+    const catalog = engine.registry.toolCatalog;
+    for (const tool of gatewayTools) {
+      if (catalog && !["gateway_list_services", "gateway_get_service", "gateway_manage_service"].includes(tool.name)) continue;
+      registered.push(registerGatewayTool(tool));
+    }
+    for (const entry of catalog?.values() ?? []) {
+      const tool = entry.definition;
+      const handle = server.registerTool(tool.name, {
+        title: tool.title,
+        description: tool.description,
+        annotations: tool.annotations,
+        icons: tool.icons,
+        _meta: tool._meta,
+        inputSchema: downstreamSchema(tool.inputSchema),
+        ...(tool.outputSchema ? { outputSchema: downstreamSchema(tool.outputSchema) } : {})
+      }, (args, context) => engine.callTransparentTool(tool.name, args,
+        toDownstreamContext(context, server.server.getClientCapabilities(), server.server.getClientVersion())));
+      handle.execution = tool.execution;
+      registered.push(handle);
+    }
+  };
+  refresh();
+  if (!options.perRequest) {
+    const events = engine.registry.catalogEvents;
+    const onChange = () => {
+      refresh();
+      if (server.isConnected()) void server.server.sendToolListChanged().catch(error => server.server.onerror?.(error));
+    };
+    events.addEventListener("change", onChange);
+    server.server.onclose = () => events.removeEventListener("change", onChange);
   }
 
   return server;

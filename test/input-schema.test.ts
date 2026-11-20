@@ -2,8 +2,24 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { buildGatewayTools } from "../src/gateway-engine.ts";
-import { createInputSchema } from "../src/mcp/input-schema.ts";
+import { createInputSchema, downstreamSchema } from "../src/mcp/input-schema.ts";
 import { createGatewayMcpServer } from "../src/mcp/server.ts";
+
+test("downstream schemas isolate reused IDs and absolute references across tools and revisions", async () => {
+  const id = "https://example.invalid/tool";
+  const contract = (field: string) => ({
+    $id: id, type: "object", required: [field],
+    properties: { [field]: { $ref: id + "#/$defs/value" } },
+    $defs: { value: { const: field } }
+  });
+  const first = downstreamSchema(contract("a"))["~standard"];
+  const second = downstreamSchema(contract("b"))["~standard"];
+  assert.equal((await first.validate({ a: "a" })).issues, undefined);
+  assert.equal((await second.validate({ b: "b" })).issues, undefined);
+  assert.ok((await second.validate({ a: "a" })).issues);
+  assert.ok((await first.validate({ b: "b" })).issues);
+  assert.ok((await second.validate({ b: "a" })).issues);
+});
 
 test("input errors identify parameters without exposing values or union internals", async () => {
   const definitions = Object.fromEntries(buildGatewayTools().map(tool => [tool.name, tool]));
@@ -46,6 +62,7 @@ for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
   test(`input error hints reach MCP clients on ${protocolVersion} without invoking tools`, async () => {
     let calls = 0;
     const server = createGatewayMcpServer({
+      registry: { toolCatalog: null, catalogEvents: new EventTarget() },
       executeTool: async () => {
         calls += 1;
         return { content: [{ type: "text", text: "ok" }] };

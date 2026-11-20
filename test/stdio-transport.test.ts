@@ -137,7 +137,7 @@ for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
         name: "gateway_list_services",
         arguments: {}
       });
-      assert.deepEqual(result.structuredContent, { services: [] });
+      assert.deepEqual(result.structuredContent, { transparentTools: false, services: [] });
     }, protocolVersion);
   });
 }

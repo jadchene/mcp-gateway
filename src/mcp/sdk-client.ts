@@ -1,7 +1,10 @@
+import { setTimeout as delay } from "node:timers/promises";
 import {
   Client,
   CLIENT_INFO_META_KEY,
   ProtocolError,
+  ProtocolErrorCode,
+  isInputRequiredResult,
   SdkHttpError,
   type CallToolRequestParams,
   type CallToolResult,
@@ -16,6 +19,7 @@ import type { ServiceConfig, ServiceMetadata, ToolDefinition } from "../types.ts
 import { VERSION } from "../version.ts";
 import type { DownstreamCallContext, McpClient } from "./client-types.ts";
 import { FormElicitationBridge } from "./form-elicitation-bridge.ts";
+import { downstreamValidator } from "./input-schema.ts";
 import { SUPPORTED_MCP_PROTOCOL_VERSIONS } from "./versions.ts";
 
 const MAX_RESTART_ATTEMPTS = 3;
@@ -47,6 +51,11 @@ export class SdkMcpClient implements McpClient {
   private restartAttempts = 0;
   private unavailableReason: string | null = null;
   private tools = new Map<string, Tool>();
+  /** 与当前 SDK 连接绑定的最近一次完整目录。 */
+  private metadata: ServiceMetadata | null = null;
+  /** 透明模式的注册表刷新回调和当前现代协议订阅。 */
+  private toolsChanged?: () => void;
+  private toolSubscription?: AbortController;
   private readonly formElicitationBridge = new FormElicitationBridge();
 
   /**
@@ -73,8 +82,50 @@ export class SdkMcpClient implements McpClient {
   /** 显示实际连接状态，连接关闭后立即变为 false。 */
   public get isConnected(): boolean { return this.client !== null; }
 
+  /** 配置热更新时可以沿用同一连接的有效目录。 */
+  public get cachedMetadata(): ServiceMetadata | null { return this.metadata; }
+
   /** 仅由显式启动或恢复操作重新启用连接。 */
   public activate(): void { this.disposed = false; }
+
+  /** 切换工具监听时保留已建立的下游会话。 */
+  public watchTools(listener?: () => void): void {
+    const changed = Boolean(this.toolsChanged) !== Boolean(listener);
+    this.toolsChanged = listener;
+    if (changed && this.client) this.configureToolSubscription(this.client);
+  }
+
+  /** 旧版协议直接推送通知，现代协议通过 SDK 订阅目录变更。 */
+  private configureToolSubscription(client: Client): void {
+    this.toolSubscription?.abort();
+    this.toolSubscription = undefined;
+    if (!this.toolsChanged || !client.getServerCapabilities()?.tools?.listChanged
+      || client.getProtocolEra() !== "modern") return;
+    const subscription = new AbortController();
+    this.toolSubscription = subscription;
+    void this.listenForToolChanges(client, subscription.signal);
+  }
+
+  /** 订阅结束后退避重连；每次订阅得到确认时补读中断期间的目录。 */
+  private async listenForToolChanges(client: Client, signal: AbortSignal): Promise<void> {
+    let retryMs = 1000;
+    while (!signal.aborted) {
+      try {
+        const subscription = await client.listen({ toolsListChanged: true }, { signal });
+        if (signal.aborted) return;
+        this.toolsChanged?.();
+        retryMs = 1000;
+        await subscription.closed;
+      } catch (error) {
+        if (!signal.aborted) this.logger.warn("downstream.tools_subscription_failed", {
+          serviceId: this.key, message: String(error)
+        });
+      }
+      if (signal.aborted) return;
+      await delay(retryMs, undefined, { signal, ref: false }).catch(() => undefined);
+      retryMs = Math.min(retryMs * 2, 30_000);
+    }
+  }
 
   /**
    * Returns the terminal unavailability reason.
@@ -139,13 +190,15 @@ export class SdkMcpClient implements McpClient {
   public async getMetadata(): Promise<ServiceMetadata> {
     return this.executeWithRecovery(async (client) => {
       const tools = await this.requestToolsList(client);
-      return {
+      if (this.client !== client) throw new Error("Downstream connection changed while reading its catalog.");
+      this.metadata = {
         protocolVersion: client.getNegotiatedProtocolVersion() ?? null,
         protocolEra: client.getProtocolEra() ?? null,
         serverInfo: toJsonObject(client.getServerVersion()),
         tools,
         refreshedAt: new Date().toISOString()
       };
+      return this.metadata;
     });
   }
 
@@ -178,11 +231,22 @@ export class SdkMcpClient implements McpClient {
       };
       const invoke = async (signal: AbortSignal): Promise<CallToolResult | InputRequiredResult> => {
         const callSignal = combineWithTimeout(signal, this.service.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS);
+        const tool = this.tools.get(name);
+        // 手动处理现代协议的确认轮次时，SDK 2.4 会过早校验中间结果。
+        const finalOutput = callClient.getProtocolEra() === "modern" ? tool?.outputSchema : undefined;
+        const validateOutput = finalOutput ? compileOutputSchema(name, finalOutput) : undefined;
         const result = await callClient.callTool(params, {
           signal: callSignal,
           allowInputRequired: true,
-          toolDefinition: this.tools.get(name)
+          toolDefinition: finalOutput && tool ? { ...tool, outputSchema: undefined } : tool
         });
+        if (validateOutput && !isInputRequiredResult(result) && !result.isError) {
+          const checked = validateOutput(result.structuredContent);
+          if (result.structuredContent === undefined || !checked.valid) {
+            throw new ProtocolError(ProtocolErrorCode.InvalidParams,
+              `Invalid structured output for '${name}': ${checked.errorMessage ?? "missing structuredContent"}`);
+          }
+        }
         return result as CallToolResult | InputRequiredResult;
       };
       if (client.getProtocolEra() === "legacy") {
@@ -227,6 +291,7 @@ export class SdkMcpClient implements McpClient {
    */
   private async connectCandidate(transportFactory: SdkTransportFactory): Promise<void> {
     const options: ClientOptions = {
+      jsonSchemaValidator: downstreamValidator,
       supportedProtocolVersions: [...SUPPORTED_MCP_PROTOCOL_VERSIONS],
       capabilities: {
         elicitation: {
@@ -245,6 +310,9 @@ export class SdkMcpClient implements McpClient {
       }
     };
     const client = new Client({ name: "mcp-gateway", version: VERSION }, options);
+    client.setNotificationHandler("notifications/tools/list_changed", () => {
+      if (this.client === client) this.toolsChanged?.();
+    });
     client.setRequestHandler("elicitation/create", async (request, context) => {
       const params = request.params as ElicitRequestFormParams;
       return this.formElicitationBridge.handle(params, context.mcpReq.signal);
@@ -265,6 +333,7 @@ export class SdkMcpClient implements McpClient {
         throw new Error(`Service '${this.key}' is stopped.`);
       }
       this.client = client;
+      this.configureToolSubscription(client);
       this.logger.info("downstream.connected", {
         serviceId: this.key,
         protocolEra: client.getProtocolEra(),
@@ -291,7 +360,8 @@ export class SdkMcpClient implements McpClient {
    * Fetches and stores full SDK tool definitions without simplifying JSON Schema.
    */
   private async requestToolsList(client: Client): Promise<ToolDefinition[]> {
-    const result = await client.listTools();
+    const result = await client.listTools(undefined, this.toolsChanged ? { cacheMode: "refresh" } : undefined);
+    if (this.client !== client) throw new Error("Downstream connection changed while listing tools.");
     if (result.tools.length > MAX_DOWNSTREAM_TOOLS) {
       throw new ResourceLimitError(`Service '${this.key}' returned more than ${MAX_DOWNSTREAM_TOOLS} tools.`);
     }
@@ -354,8 +424,22 @@ export class SdkMcpClient implements McpClient {
       return;
     }
     this.formElicitationBridge.reset(new Error(`Downstream service '${this.key}' connection was closed.`));
+    this.toolSubscription?.abort();
+    this.toolSubscription = undefined;
     this.client = null;
     this.tools.clear();
+    this.metadata = null;
+    if (!this.disposed) this.toolsChanged?.();
+  }
+}
+
+/** 在发送调用前检查契约，使无效声明以协议错误返回并保留当前连接。 */
+function compileOutputSchema(name: string, schema: NonNullable<Tool["outputSchema"]>) {
+  try {
+    return downstreamValidator.getValidator(schema);
+  } catch (error) {
+    throw new ProtocolError(ProtocolErrorCode.InvalidParams,
+      `Tool '${name}' has an invalid outputSchema: ${normalizeError(error).message}`);
   }
 }
 

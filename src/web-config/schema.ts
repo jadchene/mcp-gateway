@@ -119,6 +119,7 @@ const sqlConnection = {
 export const configSchema = (project: Project): Field => {
   if (project === "gateway")
     return object("Gateway 配置", {
+      transparentTools: bool("透明聚合模式"),
       logging: object("日志", {
         enable: bool("启用文件日志"),
         path: string("日志路径"),

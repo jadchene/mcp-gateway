@@ -24,6 +24,8 @@ export class StreamableHttpGatewayServer {
   private readonly engine: McpGatewayEngine;
   private readonly logger: Logger;
   private readonly handler: McpHttpHandler;
+  /** 将共享目录变更广播到现代 HTTP 订阅。 */
+  private readonly notifyCatalogChanged = () => this.handler.notify.toolsChanged();
   private readonly legacySessions = new Map<string, LegacyHttpSession>();
   private legacySessionsInitializing = 0;
   private legacySessionSweepTimer: NodeJS.Timeout | null = null;
@@ -54,6 +56,7 @@ export class StreamableHttpGatewayServer {
     this.logger = logger;
     this.handler = createMcpHandler(
       () => createGatewayMcpServer(engine, {
+        perRequest: true,
         includeAdminTools: config.enableAdminTools ?? false
       }),
       {
@@ -92,6 +95,7 @@ export class StreamableHttpGatewayServer {
     const maxConcurrentRequests = this.config.maxConcurrentRequests ?? 64;
     const maxRequestBodyBytes = this.config.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES;
     let activeRequests = 0;
+    let activeSubscriptions = 0;
     this.server = http.createServer((request, response) => {
       let pathname: string;
       try {
@@ -116,16 +120,27 @@ export class StreamableHttpGatewayServer {
         return;
       }
       activeRequests += 1;
-      let released = false;
+      let slot: "request" | "subscription" | "released" = "request";
       const release = (): void => {
-        if (!released) {
-          released = true;
-          activeRequests -= 1;
-        }
+        if (slot === "request") activeRequests -= 1;
+        if (slot === "subscription") activeSubscriptions -= 1;
+        slot = "released";
       };
       response.once("finish", release);
       response.once("close", release);
-      void handleBoundedRequest(request, response, maxRequestBodyBytes, handleMcp, this.logger);
+      // 读完受限请求体后才转入订阅名额，慢请求和普通工具调用仍受原上限约束。
+      const admitSubscription = (): boolean => {
+        if (slot === "released") return false;
+        if (activeSubscriptions >= maxConcurrentRequests) {
+          response.writeHead(503, { "Retry-After": "1" }).end();
+          return false;
+        }
+        activeRequests -= 1;
+        activeSubscriptions += 1;
+        slot = "subscription";
+        return true;
+      };
+      void handleBoundedRequest(request, response, maxRequestBodyBytes, handleMcp, this.logger, admitSubscription);
     });
 
     await new Promise<void>((resolveListen, rejectListen) => {
@@ -140,6 +155,7 @@ export class StreamableHttpGatewayServer {
       LEGACY_SESSION_SWEEP_INTERVAL_MS
     );
     this.legacySessionSweepTimer.unref();
+    this.engine.registry.catalogEvents.addEventListener("change", this.notifyCatalogChanged);
 
     this.logger.info("gateway.http_started", {
       host: this.config.host,
@@ -152,6 +168,7 @@ export class StreamableHttpGatewayServer {
    * Stops accepting requests and closes all in-flight SDK exchanges.
    */
   public async stop(): Promise<void> {
+    this.engine.registry.catalogEvents.removeEventListener("change", this.notifyCatalogChanged);
     if (this.legacySessionSweepTimer) {
       clearInterval(this.legacySessionSweepTimer);
       this.legacySessionSweepTimer = null;
@@ -265,10 +282,15 @@ async function handleBoundedRequest(
   response: http.ServerResponse,
   maxBytes: number,
   handleMcp: ReturnType<typeof toNodeHandler>,
-  logger: Logger
+  logger: Logger,
+  admitSubscription: () => boolean
 ): Promise<void> {
   try {
     const body = await readBoundedJsonBody(request, maxBytes);
+    const isSubscription = request.method === "GET" && Boolean(request.headers["mcp-session-id"])
+      || request.method === "POST" && body !== null && typeof body === "object"
+        && "method" in body && body.method === "subscriptions/listen";
+    if (isSubscription && !admitSubscription()) return;
     if (body === NO_BODY) {
       await handleMcp(request, response);
     } else {

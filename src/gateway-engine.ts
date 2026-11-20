@@ -13,7 +13,7 @@ export class McpGatewayEngine {
   /**
    * Stores the registry used for metadata lookup and routing.
    */
-  private readonly registry: ServiceRegistry;
+  public readonly registry: ServiceRegistry;
 
   /**
    * Stores the startup barrier that must resolve before gateway tools can use the registry.
@@ -40,6 +40,18 @@ export class McpGatewayEngine {
    */
   public setStartupBarrier(barrier: Promise<void>): void {
     this.startupBarrier = barrier;
+  }
+
+  /** 透明模式首次枚举等待下游目录就绪；默认模式可立即列出网关工具。 */
+  public async waitForToolCatalog(): Promise<void> {
+    if (this.registry.toolCatalog) await this.startupBarrier;
+  }
+
+  /** 调用前按当前目录重新确认路由，防止过期的 HTTP 请求使用已撤销的工具。 */
+  public callTransparentTool(name: string, args: unknown, context: DownstreamCallContext) {
+    const route = this.registry.toolCatalog?.get(name);
+    if (!route) throw new Error(`Tool '${name}' is no longer available.`);
+    return this.callDownstreamTool({ serviceId: route.serviceId, toolName: route.toolName, arguments: args }, context);
   }
 
   /**
@@ -87,6 +99,7 @@ export class McpGatewayEngine {
     });
 
     return successContent({
+      transparentTools: Boolean(this.registry.toolCatalog),
       services: services.map(formatServiceSummary)
     });
   }
@@ -224,7 +237,7 @@ export function buildGatewayTools(options: { includeAdminTools?: boolean } = {})
   const tools: GatewayToolDefinition[] = [
     {
       name: "gateway_list_services",
-      description: "Finds enabled services. Text filters use case-insensitive substrings joined by OR; availability further limits matches.",
+      description: "Find enabled services and choose a serviceId. If transparentTools is true, search this gateway's tools in the client using the returned serviceId and action keywords, then call the matching tool directly. If false, use gateway_list_tools, optionally gateway_get_tool_schema, then gateway_call_tool. Text filters match case-insensitive substrings by OR, with availability applied separately.",
       inputSchema: objectSchema([], {
         serviceIdFilter: stringOrArraySchema("Service ID keywords."),
         descFilter: stringOrArraySchema("Description keywords."),
@@ -375,7 +388,8 @@ function buildGatewayOutputSchemas(): Record<"listServices" | "getService" | "li
   const nullableToolSchema = nullableSchema({ type: "object" });
 
   return {
-    listServices: objectSchema(["services"], {
+    listServices: objectSchema(["transparentTools", "services"], {
+      transparentTools: { type: "boolean", description: "Whether this gateway currently exposes downstream tools directly." },
       services: {
         type: "array",
         items: objectSchema(["serviceId", "description", "available"], {

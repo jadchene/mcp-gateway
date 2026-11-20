@@ -4,7 +4,7 @@ English | [简体中文](./README_zh.md)
 
 ## Introduction
 
-MCP Gateway puts multiple MCP services behind one endpoint. An agent connects to the gateway and sees up to six routing tools; downstream services, tools, and schemas are looked up only when they are needed.
+MCP Gateway puts multiple MCP services behind one endpoint. By default, an agent sees up to six routing tools and looks up downstream tools as needed. Clients with tool search can opt into transparent aggregation for direct calls.
 
 Supports stdio and Streamable HTTP with MCP `2026-07-28`, `2025-11-25`, and `2025-06-18`. Legacy `/sse` endpoints are unsupported.
 
@@ -47,7 +47,7 @@ mcp-gateway-service --http --config ./config.json
 ```
 
 The default endpoint is `http://127.0.0.1:3000/mcp`.
-HTTP hides `gateway_manage_service` by default. Non-loopback binds require a bearer token in `MCP_GATEWAY_AUTH_TOKEN`.
+HTTP hides `gateway_manage_service` by default. Binding to a non-loopback address requires a bearer token. The gateway reads it from `MCP_GATEWAY_AUTH_TOKEN` by default. Use `--auth-token-env <name>` to select a different environment variable.
 
 Codex:
 
@@ -74,7 +74,7 @@ claude mcp add --transport http gateway http://127.0.0.1:3000/mcp
 | `--path <path>` | HTTP endpoint path. | `/mcp` |
 | `--auth-token-env <name>` | Environment variable containing the HTTP bearer token. | `MCP_GATEWAY_AUTH_TOKEN` |
 | `--http-admin-tools` | Exposes `gateway_manage_service` over authenticated HTTP. | Disabled |
-| `--max-concurrent-requests <n>` | Bounds in-flight HTTP requests. | `64` |
+| `--max-concurrent-requests <n>` | Limits in-flight HTTP requests and open notification streams separately. Each pool allows up to this many. | `64` |
 | `--max-request-body-bytes <n>` | Rejects HTTP request bodies above this byte limit; maximum configurable value is 64 MiB. | `16777216` (16 MiB) |
 | `--max-legacy-sessions <n>` | Bounds retained stateful legacy HTTP sessions. | `256` |
 | `--version`, `-v` | Prints the installed version. | — |
@@ -85,81 +85,60 @@ Stdio remains available when `--http` is enabled.
 
 ```json
 {
-  "logging": {
-    "enable": false,
-    "path": "./logs/mcp-gateway.log",
-    "maxBytes": 10485760
-  },
   "services": [
     {
       "serviceId": "local-tools",
-      "enable": true,
       "name": "Local Tools",
       "description": "Local MCP service",
-      "callTimeoutMs": 120000,
-      "confirmationRequiredTools": ["delete_*", "deploy_?"],
-      "codexAutoReview": false,
-      "disabledTools": ["internal_*", "legacy_tool"],
       "transport": {
         "type": "stdio",
         "command": "your-mcp-service",
-        "args": ["--config", "/absolute/path/service/config.json"],
-        "cwd": "/absolute/path/service",
-        "env": {},
-        "inheritEnv": false,
-        "envAllowlist": []
-      }
-    },
-    {
-      "serviceId": "remote-tools",
-      "enable": false,
-      "name": "Remote Tools",
-      "description": "Remote MCP service",
-      "callTimeoutMs": 120000,
-      "confirmationRequiredTools": [],
-      "codexAutoReview": false,
-      "disabledTools": [],
-      "transport": {
-        "type": "http",
-        "url": "http://127.0.0.1:3200/mcp",
-        "headers": {
-          "Authorization": "Bearer replace-with-token"
-        }
+        "args": [
+          "--config",
+          "/absolute/path/service/config.json"
+        ]
       }
     }
   ]
 }
 ```
 
-Configure and enable the services you use. Remove `Authorization` for an HTTP service without token authentication.
+See [config.example.json](config.example.json) for an HTTP downstream service and additional settings.
 
 | Setting | Usage |
 | --- | --- |
 | `serviceId` | Unique identifier for each service. |
-| `confirmationRequiredTools` | Case-sensitive full tool-name patterns: `*` matches any number of characters, `?` matches one. Matching calls require confirmation. |
+| `confirmationRequiredTools` | Requires confirmation for matching downstream tool names. Patterns match the full original name, are case-sensitive, and support `*` for any number of characters and `?` for one. |
 | `disabledTools` | Uses the same patterns to hide and block tools; takes precedence over confirmation rules. |
 | `transport.cwd`, `transport.args` | Prefer absolute paths. Relative working directories resolve from the gateway process directory. |
 | `transport.env`, `transport.envAllowlist` | Supply variable values or allow named variables through. Custom variables are not inherited unless allowed; `inheritEnv: true` inherits the full environment. Config strings do not expand `${VAR}`. |
 | `logging.path`, `logging.maxBytes` | Log paths resolve from the config directory; logs rotate at the configured size. |
 
-Configuration reloads automatically; invalid updates keep the last valid configuration. The complete example is also available in [config.example.json](config.example.json).
+The gateway reloads the file automatically and keeps the last valid configuration if a reload fails.
 
 ### Gateway Tools
 
-| Tool | Description |
-| --- | --- |
-| `gateway_list_services` | Searches enabled services by identifier or description and can filter by availability. |
-| `gateway_get_service` | Shows one service's connection state, protocol revision, server identity, and recent error. |
-| `gateway_list_tools` | Searches a service's tools by name or description and can include schemas. |
-| `gateway_get_tool_schema` | Returns schemas for exact tool names. |
-| `gateway_manage_service` | Reconnects a service or enables/disables it in the config file. |
-| `gateway_call_tool` | Calls one downstream tool and returns its MCP result. |
+To enable transparent aggregation, set `"transparentTools": true` at the top level of the config file or turn on **透明聚合模式** under **通用设置** in the Web UI and save. The default is `false`.
 
-The usual flow is `gateway_list_services` → `gateway_list_tools` → `gateway_get_tool_schema` when needed → `gateway_call_tool`. Pass `{}` to `gateway_call_tool` when the downstream tool has no arguments.
+Call `gateway_list_services`, choose a `serviceId` from `services`, and read the top-level `transparentTools` flag in the result.
 
-Confirmations show the service, tool, and arguments and require a client with interactive confirmation support. Calls with uncertain outcomes are not retried automatically.
+- **Transparent (`true`)** — Use the returned `serviceId` and action keywords together in the client's tool search. For example, if the service ID is `database`, search for `database list tables`. Select the matching tool from this gateway and call it directly with its own arguments.
+- **Routing (`false`)** — Call `gateway_list_tools` with the returned `serviceId`. Get the schema with `gateway_get_tool_schema` if needed, then call `gateway_call_tool` with `serviceId`, `toolName`, and `arguments`. Pass `{}` for `arguments` when the tool takes no parameters.
 
-For Codex automatic review, set `"codexAutoReview": true` in the selected `services[]` block and start Codex with `codex -c approvals_reviewer=auto_review`. This applies to gateway confirmations; configure downstream services' own approvals separately. Otherwise, use Accept / Decline / Cancel. Codex policy determines whether an operation is approved.
+| Gateway tool | Mode | Description |
+| --- | --- | --- |
+| `gateway_list_services` | Both | Returns the current mode and enabled services. Filter by identifier, description, or availability. |
+| `gateway_get_service` | Both | Shows one service's connection state, protocol revision, server identity, and recent error. |
+| `gateway_manage_service` | Both | Reconnects, enables, or disables a service. HTTP requires `--http-admin-tools` and a bearer token. |
+| `gateway_list_tools` | Routing | Searches a service's tools by name or description and can include schemas. |
+| `gateway_get_tool_schema` | Routing | Returns schemas for exact tool names. |
+| `gateway_call_tool` | Routing | Calls one downstream tool and returns its MCP result. |
+
+In transparent mode, schema loading and token usage depend on the client.
+
+The gateway notifies listening clients when its tool catalog changes. If Codex still shows stale tools, reload MCP and open a new thread.
+
+Manual approvals require a client that supports interactive confirmation. To enable Codex automatic review for gateway confirmations, set `"codexAutoReview": true` on the service and start Codex with `codex -c approvals_reviewer=auto_review`. Configure downstream approvals separately.
 
 Agents with Skills support can use the included [MCP Gateway Skill](./skills/mcp-gateway/SKILL.md) for the discovery and calling workflow.
 
@@ -188,16 +167,9 @@ Disabled by default. Web binds only to `127.0.0.1`, needs no token, and uses a s
 mcp-gateway-service --config ./config.json --web --web-port 3100
 ```
 
-Open the printed URL. Alternatively, add `"web": { "enabled": true, "port": 3100 }` to your existing configuration.
+Open the printed URL and click **Save configuration** to apply edits. You can also set `"web": { "enabled": true, "port": 3100 }` in the config file. The `--web` and `--no-web` flags take precedence. Restart the gateway after changing the Web port or enablement setting.
 
-- CLI overrides the file: `--web` enables, `--no-web` disables; with neither, `web.enabled` applies and defaults to false. A port alone does not enable Web.
-- Click Save configuration to write the original file and reload it. External edits trigger a conflict; reload failures are reported separately.
-- Runtime information shows listener settings and the configuration file location. Web enablement and port are read-only in the UI; change the file or startup arguments and restart.
-- Web stops with the process. If Web fails to start, a warning is logged and MCP continues running. Change the port and restart to resolve a port conflict.
-
-Set a downstream service’s `webUrl` to open its configuration page in a new tab after saving. Gateway does not start or proxy that page.
-
-The **Service status** page shows connection state and starts, stops, or restarts stdio services without changing their enabled setting. HTTP services support connect, disconnect, and reconnect only. Stopped services stay stopped through configuration reloads; restarting Gateway loads enabled services again.
+Use **Service status** to start or stop stdio processes, or connect or disconnect HTTP services. A manual stop lasts until the gateway restarts. Set a service's `webUrl` to open its own configuration page.
 
 ## License
 

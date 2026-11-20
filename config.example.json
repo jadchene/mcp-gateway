@@ -1,4 +1,5 @@
 {
+  "transparentTools": false,
   "logging": {
     "enable": false,
     "path": "./logs/mcp-gateway.log",

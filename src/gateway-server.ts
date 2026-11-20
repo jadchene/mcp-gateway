@@ -1,4 +1,5 @@
-import { serveStdio, type StdioServerHandle } from "@modelcontextprotocol/server/stdio";
+import { isJSONRPCRequest, type JSONRPCRequest } from "@modelcontextprotocol/server";
+import { serveStdio, StdioServerTransport, type StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import { McpGatewayEngine } from "./gateway-engine.ts";
 import { Logger } from "./logger.ts";
 import { createGatewayMcpServer } from "./mcp/server.ts";
@@ -34,19 +35,45 @@ export class GatewayServer {
   /**
    * Starts the dual-era SDK server on the current process streams.
    */
-  public start(): void {
+  public start(configuredServiceIds?: string[]): void {
     if (this.handle) {
       return;
     }
-    this.handle = serveStdio(
-      () => createGatewayMcpServer(this.engine),
+    const transport = new StdioServerTransport();
+    const handle = serveStdio(
+      () => createGatewayMcpServer(this.engine, { configuredServiceIds }),
       {
         legacy: "serve",
+        transport,
         onerror: (error) => {
           this.logger.error("gateway.protocol_error", { message: error.message });
         }
       }
     );
+    this.handle = handle;
+    if (this.engine.registry.toolCatalog) {
+      // SDK 继续处理握手和订阅。目录就绪之前只暂存工具请求，包括已缓存工具名的直接调用。
+      const receive = transport.onmessage!;
+      const waiting = new Map<JSONRPCRequest["id"], JSONRPCRequest>();
+      transport.onmessage = message => {
+        if (isJSONRPCRequest(message) && (message.method === "tools/list" || message.method === "tools/call")) {
+          waiting.set(message.id, message);
+          return;
+        }
+        if ("method" in message && message.method === "notifications/cancelled") {
+          const id = message.params?.requestId;
+          if ((typeof id === "string" || typeof id === "number") && waiting.delete(id)) return;
+        }
+        receive(message);
+      };
+      void this.engine.waitForToolCatalog().then(() => {
+        transport.onmessage = receive;
+        if (this.handle === handle) {
+          for (const request of waiting.values()) receive(request);
+        }
+        waiting.clear();
+      }, () => waiting.clear());
+    }
   }
 
   /**

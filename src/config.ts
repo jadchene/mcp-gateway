@@ -54,6 +54,7 @@ export function validateGatewayConfig(input: unknown, baseDir = process.cwd()): 
   }
 
   return {
+    transparentTools: optionalBoolean(input.transparentTools, "transparentTools") ?? false,
     logging: validateLoggingConfig(input.logging, baseDir),
     services: services.filter((service) => service.enable)
   };

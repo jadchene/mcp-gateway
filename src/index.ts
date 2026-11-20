@@ -87,9 +87,10 @@ class Application {
     }
 
     try {
-      const startup = this.registry.initialize();
+      const config = await new ConfigLoader().load(this.configPath);
+      const startup = this.registry.initialize(config);
       this.engine.setStartupBarrier(startup);
-      this.server.start();
+      this.server.start(config.services.map(service => service.serviceId));
       await startup;
 
       const serverConfig = this.cliOptions.server;

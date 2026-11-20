@@ -49,6 +49,7 @@ test("StreamableHttpGatewayServer serves MCP 2026-07-28 without protocol session
       arguments: {}
     });
     assert.deepEqual(called.structuredContent, {
+      transparentTools: false,
       services: [
         {
           serviceId: "demo",
@@ -71,6 +72,29 @@ test("StreamableHttpGatewayServer serves MCP 2026-07-28 without protocol session
     assert.equal(remove.status, 400);
   } finally {
     await client.close().catch(() => undefined);
+    await server.stop();
+  }
+});
+
+test("an open notification stream has a separate bounded slot from HTTP calls", async () => {
+  const server = createGatewayServer({ maxConcurrentRequests: 1 });
+  const client = new Client({ name: "subscription-limit", version: "1" }, {
+    versionNegotiation: { mode: { pin: "2026-07-28" } }
+  });
+  await server.start();
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+    const subscription = await client.listen({ toolsListChanged: true });
+    assert.equal(subscription.honoredFilter.toolsListChanged, true);
+    assert.ok((await client.listTools()).tools.length);
+    const result = await client.callTool({ name: "gateway_list_services", arguments: {} });
+    assert.notEqual(result.isError, true);
+    await assert.rejects(client.listen({ toolsListChanged: true }), { status: 503 });
+    await subscription.close();
+    const replacement = await client.listen({ toolsListChanged: true });
+    await replacement.close();
+  } finally {
+    await client.close();
     await server.stop();
   }
 });
@@ -205,6 +229,7 @@ for (const protocolVersion of ["2025-11-25", "2025-06-18"] as const) {
         arguments: {}
       });
       assert.deepEqual(called.structuredContent, {
+        transparentTools: false,
         services: [
           {
             serviceId: "demo",
@@ -570,6 +595,7 @@ function createGatewayServer(overrides: Partial<{
   authToken: string;
   enableAdminTools: boolean;
   maxRequestBodyBytes: number;
+  maxConcurrentRequests: number;
   maxLegacySessions: number;
 }> = {}, registry = createRegistryStub()): StreamableHttpGatewayServer {
   const logger = new Logger();
@@ -644,6 +670,8 @@ function createElicitingRegistryStub(): ReturnType<typeof createRegistryStub> {
 }
 
 function createRegistryStub(): {
+  toolCatalog: null;
+  catalogEvents: EventTarget;
   listServices: () => ServiceRuntimeSnapshot[];
   getService: (serviceId: string) => ServiceRuntimeSnapshot | null;
   listTools: (serviceId: string) => ToolDefinition[];
@@ -690,6 +718,8 @@ function createRegistryStub(): {
   };
 
   return {
+    toolCatalog: null,
+    catalogEvents: new EventTarget(),
     listServices: () => [snapshot],
     getService: (serviceId) => serviceId === "demo" ? snapshot : null,
     listTools: () => [],

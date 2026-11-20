@@ -176,6 +176,7 @@ test("McpGatewayEngine returns a minimal service list payload", () => {
 
   return result.then((payload) => {
     assert.deepEqual(payload.structuredContent, {
+      transparentTools: false,
       services: [
         {
           serviceId: "playwright",
@@ -1021,6 +1022,7 @@ test("McpGatewayEngine text filters preserve scalar and array equivalence", () =
     const scalar = engine.listServices({ [field]: "BASE" });
     assert.deepEqual(scalar, engine.listServices({ [field]: ["BASE"] }));
     assert.deepEqual(scalar.structuredContent, {
+      transparentTools: false,
       services: [{ serviceId: "database", description: "Database access", available: true }]
     });
     assert.deepEqual(engine.listServices({ [field]: null }), engine.listServices({}));

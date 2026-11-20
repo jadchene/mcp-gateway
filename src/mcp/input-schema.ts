@@ -1,5 +1,34 @@
-import { fromJsonSchema, type JsonSchemaType } from "@modelcontextprotocol/server";
+import { fromJsonSchema, type JsonSchemaType, type JsonSchemaValidator } from "@modelcontextprotocol/server";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv";
 import type { JsonObject } from "../types.ts";
+
+const providers = new WeakMap<JsonSchemaType, AjvJsonSchemaValidator>();
+
+/** 在契约自己的命名空间编译，保留 SDK 在调用前检查输出契约的行为。 */
+export const downstreamValidator = {
+  getValidator<T>(schema: JsonSchemaType): JsonSchemaValidator<T> {
+    let provider = providers.get(schema);
+    if (!provider) {
+      provider = new AjvJsonSchemaValidator();
+      providers.set(schema, provider);
+    }
+    return provider.getValidator<T>(schema);
+  }
+};
+
+/** 列目录时返回原始契约，实际收发数据时才编译，并复用同一快照的校验器。 */
+export function downstreamSchema(schema: JsonObject) {
+  let validator: ReturnType<typeof fromJsonSchema> | undefined;
+  return { "~standard": {
+    version: 1 as const,
+    vendor: "mcp-gateway",
+    jsonSchema: { input: () => schema, output: () => schema },
+    validate: (value: unknown) => {
+      validator ??= fromJsonSchema(schema as JsonSchemaType, downstreamValidator);
+      return validator["~standard"].validate(value);
+    }
+  } };
+}
 
 /**
  * 保留 SDK 的完整校验和 schema 导出，仅整理输入失败时的提示。

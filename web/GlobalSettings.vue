@@ -19,7 +19,18 @@ const update = (key, value) => {
     <div class="page-heading">
       <p>管理当前服务的日志、超时与默认策略</p>
     </div>
-    <section v-if="project !== 'gateway'" class="settings-card">
+    <section v-if="project === 'gateway'" class="settings-card">
+      <div class="section-heading">
+        <h3>工具发现</h3>
+        <p>开启后，客户端可按服务标识和工具名搜索并直接调用下游工具。</p>
+      </div>
+      <FieldGrid
+        :model-value="modelValue"
+        :fields="pick(schema, ['transparentTools'])"
+        @update:model-value="emit('update:modelValue', $event)"
+      />
+    </section>
+    <section v-else class="settings-card">
       <div class="section-heading">
         <h3>连接与会话</h3>
         <p>统一控制连接数量和会话有效期</p>

@@ -1,6 +1,7 @@
 import { open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { ConfigLoader } from "./config.ts";
 import { Logger } from "./logger.ts";
 import { StdioMcpClient } from "./mcp/client.ts";
@@ -8,7 +9,8 @@ import type { McpClient } from "./mcp/client-types.ts";
 import type { DownstreamCallContext, DownstreamToolResult } from "./mcp/client-types.ts";
 import { StreamableHttpClient } from "./mcp/http-client.ts";
 import { matchesAnyToolNamePattern } from "./tool-name-pattern.ts";
-import type { ServiceConfig, ServiceMetadata, ServiceRuntimeSnapshot, ToolDefinition } from "./types.ts";
+import { createTransparentTool, type TransparentTool } from "./transparent-tools.ts";
+import type { GatewayConfig, ServiceConfig, ServiceMetadata, ServiceRuntimeSnapshot, ToolDefinition } from "./types.ts";
 
 /**
  * Maintains the active service pool, client instances, and cached metadata.
@@ -42,6 +44,45 @@ export class ServiceRegistry {
    */
   private clients = new Map<string, McpClient>();
 
+  /** null 表示路由模式；空目录表示透明模式下没有已发布工具。 */
+  private transparentCatalog: Map<string, TransparentTool> | null = null;
+  /** 只向订阅客户端发送一次完整目录的变更通知。 */
+  public readonly catalogEvents = new EventTarget();
+
+  /** 返回当前已发布的只读路由表。 */
+  public get toolCatalog(): ReadonlyMap<string, TransparentTool> | null {
+    return this.transparentCatalog;
+  }
+
+  /** 在切换快照前完成公开名校验，避免暴露半份目录。 */
+  private buildToolCatalog(snapshots = this.snapshots, enabled = this.transparentCatalog !== null) {
+    if (!enabled) return null;
+    const next = new Map<string, TransparentTool>();
+    for (const snapshot of snapshots.values()) {
+      const { config } = snapshot;
+      if (this.stopped.has(config.serviceId)) continue;
+      for (const tool of visibleTools(snapshot)) {
+        const entry = createTransparentTool(config, tool);
+        const name = entry.definition.name;
+        if (next.has(name)) throw new Error(`Duplicate transparent tool name '${name}'.`);
+        next.set(name, entry);
+      }
+    }
+    return next;
+  }
+
+  /** 同步发布工具声明和调用路由，跳过无变化的重载。 */
+  private publishToolCatalog(next = this.buildToolCatalog()): void {
+    for (const client of this.refreshRetries.keys()) {
+      if (!next || this.clients.get(client.key) !== client || this.stopped.has(client.key)) {
+        this.cancelRefreshRetry(client);
+      }
+    }
+    if (isDeepStrictEqual(next, this.transparentCatalog)) return;
+    this.transparentCatalog = next;
+    this.catalogEvents.dispatchEvent(new Event("change"));
+  }
+
   /**
    * Prevents overlapping config reload operations.
    */
@@ -52,6 +93,62 @@ export class ServiceRegistry {
   private stopped = new Set<string>();
   /** 当前执行中的生命周期动作，用于页面状态和调用拦截。 */
   private transitions = new Map<string, "starting" | "stopping">();
+  /** 合并同一客户端尚未执行的目录刷新。 */
+  private pendingRefresh = new Set<McpClient>();
+  /** 等待重试的刷新独立计时，不占用服务生命周期队列。 */
+  private refreshRetries = new Map<McpClient, NodeJS.Timeout>();
+
+  /** 在生命周期队列中刷新仍属于当前快照的下游客户端。 */
+  private watchTools(client: McpClient, enabled: boolean): void {
+    client.watchTools(enabled ? () => this.queueToolRefresh(client) : undefined);
+  }
+
+  /** 新通知立即读取；临时错误按退避间隔补读，读取期间收到的新通知再排一次。 */
+  private queueToolRefresh(client: McpClient, retryMs = 0): void {
+    this.cancelRefreshRetry(client);
+    if (this.pendingRefresh.has(client)) return;
+    this.pendingRefresh.add(client);
+    this.reloadPromise = this.reloadPromise.catch(() => undefined).then(async () => {
+      this.pendingRefresh.delete(client);
+      if (!this.transparentCatalog || this.clients.get(client.key) !== client || this.stopped.has(client.key)) return;
+      const snapshot = this.requireService(client.key);
+      if (!client.isConnected || (!client.cachedMetadata && snapshot.metadata.refreshedAt !== null)) {
+        snapshot.metadata = emptyMetadata();
+        this.markServiceUnavailable(client.key, client.unavailableMessage ?? "下游连接已关闭", client.restartCount);
+        this.publishToolCatalog();
+        if (client.isUnavailable) return;
+        if (retryMs === 0 && !client.isConnected) {
+          this.scheduleToolRefresh(client, 1000);
+          return;
+        }
+      }
+      try {
+        const metadata = await client.getMetadata();
+        if (this.clients.get(client.key) !== client || client.cachedMetadata !== metadata) return;
+        snapshot.metadata = metadata;
+        this.markServiceAvailable(client.key, client.restartCount);
+        this.publishToolCatalog();
+      } catch (error) {
+        this.logger.warn("downstream.tools_refresh_failed", { serviceId: client.key, message: String(error) });
+        if (this.clients.get(client.key) === client) {
+          this.scheduleToolRefresh(client, retryMs ? Math.min(retryMs * 2, 30_000) : 1000);
+        }
+      }
+    });
+  }
+
+  /** 重载和通知共用重试计时器，后续通知仍可提前触发补读。 */
+  private scheduleToolRefresh(client: McpClient, delayMs: number): void {
+    if (client.isUnavailable || this.pendingRefresh.has(client) || this.refreshRetries.has(client)) return;
+    const timer = setTimeout(() => this.queueToolRefresh(client, delayMs), delayMs);
+    this.refreshRetries.set(client, timer.unref());
+  }
+
+  /** 释放已由新通知、配置变更或关闭操作取代的定时器。 */
+  private cancelRefreshRetry(client: McpClient): void {
+    clearTimeout(this.refreshRetries.get(client));
+    this.refreshRetries.delete(client);
+  }
 
   /** 返回页面所需的运行信息，不包含启动参数和凭据。 */
   public listServiceStates() {
@@ -84,15 +181,18 @@ export class ServiceRegistry {
         if (action === "stop") return;
         this.stopped.delete(serviceId);
         const next = createClient(snapshot.config, this.logger);
+        this.watchTools(next, this.transparentCatalog !== null);
         this.clients.set(serviceId, next);
         snapshot.metadata = await next.getMetadata();
         this.markServiceAvailable(serviceId, next.restartCount);
       } catch (error) {
+        snapshot.metadata = { ...snapshot.metadata, tools: [] };
         const message = error instanceof Error ? error.message : String(error);
         this.markServiceUnavailable(serviceId, message, this.clients.get(serviceId)?.restartCount ?? 0);
         throw error;
       } finally {
         this.transitions.delete(serviceId);
+        this.publishToolCatalog();
       }
     });
     this.reloadPromise = operation.catch(() => undefined);
@@ -115,8 +215,9 @@ export class ServiceRegistry {
   /**
    * Loads the initial config snapshot.
    */
-  public async initialize(): Promise<void> {
-    await this.reloadStrict();
+  public async initialize(config?: GatewayConfig): Promise<void> {
+    if (config?.transparentTools) this.transparentCatalog = new Map();
+    await this.reloadStrict(config);
   }
 
   /**
@@ -137,33 +238,42 @@ export class ServiceRegistry {
   /**
    * Serializes reloads and lets startup and management callers observe failures.
    */
-  public async reloadStrict(): Promise<void> {
+  public async reloadStrict(initialConfig?: GatewayConfig): Promise<void> {
     this.reloadPromise = this.reloadPromise.catch(() => undefined).then(async () => {
       const absolutePath = resolve(this.configPath);
       this.logger.info("config.reload.started", { configPath: absolutePath });
 
-      const nextConfig = await this.configLoader.load(absolutePath);
+      const nextConfig = initialConfig ?? await this.configLoader.load(absolutePath);
       this.logger.configure(nextConfig.logging);
       const nextSnapshots = new Map<string, ServiceRuntimeSnapshot>();
       const nextClients = new Map<string, McpClient>();
+      let catalog: Map<string, TransparentTool> | null;
 
       try {
         for (const service of nextConfig.services) {
-          const snapshot = await this.buildServiceSnapshot(service, nextClients);
+          const snapshot = await this.buildServiceSnapshot(service, nextClients, nextConfig.transparentTools);
           nextSnapshots.set(service.serviceId, snapshot);
         }
+        catalog = this.buildToolCatalog(nextSnapshots, nextConfig.transparentTools);
       } catch (error) {
         this.logger.error("config.reload.failed", {
           configPath: absolutePath,
           message: error instanceof Error ? error.message : String(error)
         });
         await disposeNewClients(this.clients, nextClients);
+        for (const client of this.clients.values()) this.watchTools(client, this.transparentCatalog !== null);
         throw error;
       }
 
       const previousClients = this.clients;
       this.snapshots = nextSnapshots;
       this.clients = nextClients;
+      this.publishToolCatalog(catalog);
+      if (catalog) {
+        for (const [id, snapshot] of nextSnapshots) {
+          if (snapshot.runtime.lastError !== null) this.scheduleToolRefresh(nextClients.get(id)!, 1000);
+        }
+      }
       await disposeRemovedClients(previousClients, nextClients);
 
       this.logger.info("config.reload.succeeded", {
@@ -195,9 +305,7 @@ export class ServiceRegistry {
    */
   public listTools(serviceId: string, toolName?: string[], desc?: string[]): ToolDefinition[] {
     const snapshot = this.requireService(serviceId);
-    const tools = snapshot.metadata.tools.filter(
-      (tool) => !matchesAnyToolNamePattern(tool.name, snapshot.config.disabledTools)
-    );
+    const tools = visibleTools(snapshot);
     const nameKeywords = normalizeKeywords(toolName);
     const descriptionKeywords = normalizeKeywords(desc);
     if (nameKeywords.length === 0 && descriptionKeywords.length === 0) {
@@ -288,8 +396,10 @@ export class ServiceRegistry {
    * Disposes all downstream clients during shutdown.
    */
   public async dispose(): Promise<void> {
-    await disposeClientMap(this.clients);
-    this.clients.clear();
+    const clients = this.clients;
+    this.clients = new Map();
+    for (const client of this.refreshRetries.keys()) this.cancelRefreshRetry(client);
+    await disposeClientMap(clients);
   }
 
   /**
@@ -298,7 +408,8 @@ export class ServiceRegistry {
   private async reconnectService(serviceId: string): Promise<ManageServiceResult> {
     // 与配置重载共用队列，防止两个替换操作同时启动同一服务。
     const operation = this.reloadPromise.catch(() => undefined)
-      .then(() => this.reconnectServiceOnce(serviceId));
+      .then(() => this.reconnectServiceOnce(serviceId))
+      .finally(() => this.publishToolCatalog());
     this.reloadPromise = operation.then(() => undefined, () => undefined);
     return operation;
   }
@@ -313,6 +424,7 @@ export class ServiceRegistry {
     }
 
     const nextClient = createClient(snapshot.config, this.logger);
+    this.watchTools(nextClient, this.transparentCatalog !== null);
     const restartProcess = snapshot.config.transport.type === "stdio";
     // stdio 子进程可能持有 Web 端口等独占资源，必须先关闭旧实例。
     if (restartProcess) await currentClient.dispose();
@@ -357,6 +469,7 @@ export class ServiceRegistry {
         lastConnectedAt: restored ? new Date().toISOString() : previousRuntime.lastConnectedAt,
         restartAttempts: currentClient.restartCount
       };
+      if (restartProcess && !restored) snapshot.metadata = { ...snapshot.metadata, tools: [] };
 
       return {
         serviceId,
@@ -408,25 +521,20 @@ export class ServiceRegistry {
   /**
    * Builds one runtime snapshot and initializes required metadata.
    */
-  private async buildServiceSnapshot(service: ServiceConfig, nextClients: Map<string, McpClient>): Promise<ServiceRuntimeSnapshot> {
+  private async buildServiceSnapshot(service: ServiceConfig, nextClients: Map<string, McpClient>, transparentTools: boolean): Promise<ServiceRuntimeSnapshot> {
     const reusedClient = this.clients.get(service.serviceId);
     const client = reusedClient && reusedClient.matchesConfig(service)
       ? reusedClient
       : createClient(service, this.logger);
     nextClients.set(service.serviceId, client);
+    this.watchTools(client, transparentTools);
     if (reusedClient && reusedClient !== client
       && this.snapshots.get(service.serviceId)?.config.transport.type === "stdio") {
       // 配置切换前释放旧进程的监听端口，避免新旧实例争用同一端口。
       await reusedClient.dispose();
     }
 
-    let metadata: ServiceMetadata = {
-      protocolVersion: null,
-      protocolEra: null,
-      serverInfo: null,
-      tools: [],
-      refreshedAt: null
-    };
+    let metadata = emptyMetadata();
 
     let available = false;
     let lastError: string | null = null;
@@ -441,6 +549,10 @@ export class ServiceRegistry {
       lastConnectedAt = new Date().toISOString();
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
+      if (transparentTools && client.cachedMetadata) {
+        metadata = client.cachedMetadata;
+        lastConnectedAt = this.snapshots.get(service.serviceId)?.runtime.lastConnectedAt ?? metadata.refreshedAt;
+      }
       this.logger.warn("service.metadata.refresh_failed", {
         serviceId: service.serviceId,
         message: lastError
@@ -586,6 +698,16 @@ function createClient(service: ServiceConfig, logger: Logger): McpClient {
     default:
       throw new Error(`Unsupported transport '${String((service.transport as { type?: unknown }).type)}'.`);
   }
+}
+
+/** 表示当前连接尚无有效目录。 */
+function emptyMetadata(): ServiceMetadata {
+  return { protocolVersion: null, protocolEra: null, serverInfo: null, tools: [], refreshedAt: null };
+}
+
+/** 路由模式和透明模式使用相同的禁用规则。 */
+function visibleTools(snapshot: ServiceRuntimeSnapshot): ToolDefinition[] {
+  return snapshot.metadata.tools.filter(tool => !matchesAnyToolNamePattern(tool.name, snapshot.config.disabledTools));
 }
 
 /**

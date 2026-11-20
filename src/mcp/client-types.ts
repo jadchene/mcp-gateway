@@ -49,8 +49,12 @@ export interface McpClient {
   readonly key: string;
   /** 当前协议连接是否仍然存在。 */
   readonly isConnected: boolean;
+  /** 当前连接最近一次读成功的目录，连接关闭即清除。 */
+  readonly cachedMetadata: ServiceMetadata | null;
   /** 允许已显式停止的客户端重新建立连接。 */
   activate(): void;
+  /** 根据聚合模式切换下游目录监听，连接恢复后继续使用同一回调。 */
+  watchTools(listener?: () => void): void;
   /**
    * Indicates whether the service has become unavailable after recovery exhaustion.
    */

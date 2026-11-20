@@ -12,6 +12,8 @@ export type TransportConfig = StdioTransportConfig | HttpTransportConfig;
  * Declares a downstream MCP service pool config file.
  */
 export interface GatewayConfig {
+  /** 显式启用按服务标识加前缀的下游工具目录。 */
+  transparentTools: boolean;
   /**
    * Declares the file logging behavior for the gateway process.
    */
